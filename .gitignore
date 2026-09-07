@@ -1,0 +1,44 @@
+# Data and model artefacts — never committed
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+runs/
+*.pt
+*.onnx
+*.engine
+*.mp4
+*.avi
+*.mkv
+
+# Reports and outputs
+outputs/
+reports/
+!reports/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
