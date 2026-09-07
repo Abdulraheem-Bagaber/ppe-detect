@@ -1,0 +1,80 @@
+# Default configuration.
+#
+# Every threshold in the system lives here. Nothing in src/ppe hard-codes one.
+# Tuning compliance behaviour must never require retraining or a code change.
+#
+# Override any value from the environment with the PPE_ prefix and __ nesting,
+# for example:  PPE_DEBOUNCE__CONFIRM_FRAMES=20
+
+seed: 1337
+
+model:
+  backend: ultralytics          # 'ultralytics' (dev) or 'onnx' (served path)
+  weights: models/yolov8n-ppe.pt
+  imgsz: 640
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  max_detections: 300
+  device: auto                  # 'auto' picks cuda when available, else cpu
+  class_map:                    # model class index -> our vocabulary
+    0: person
+    1: helmet
+    2: vest
+
+association:
+  required: [helmet, vest]
+  min_person_confidence: 0.35
+  min_person_height_px: 64.0    # smaller than this is not judged, not accused
+  edge_margin_px: 4.0
+  skip_when_cropped: true
+  rules:
+    helmet:
+      # A worn helmet's centre falls in the top third of the person's box.
+      # A helmet carried at waist height fails this and is correctly ignored.
+      band_top: 0.0
+      band_bottom: 0.35
+      min_containment: 0.5
+      max_centre_offset: 0.6
+      min_confidence: 0.25
+    vest:
+      # Torso band: below the head, above the knees.
+      band_top: 0.15
+      band_bottom: 0.75
+      min_containment: 0.6
+      max_centre_offset: 0.7
+      min_confidence: 0.25
+
+tracking:
+  enabled: true
+  track_activation_threshold: 0.25
+  lost_track_buffer: 30
+  minimum_matching_threshold: 0.8
+  frame_rate: 30
+
+debounce:
+  confirm_frames: 15            # ~0.5 s at 30 fps
+  cooldown_s: 60.0
+  max_gap_frames: 3
+  forget_after_frames: 300
+
+zones:
+  # Empty list plus evaluate_when_no_zones: true means "the whole frame is the
+  # work area". Add polygons in image pixel coordinates to narrow it.
+  zones: []
+  anchor: bottom_centre
+  evaluate_when_no_zones: true
+
+privacy:
+  # PDPL posture: on by default. Faces are blurred before any frame is written
+  # to disk or returned by the API.
+  blur_faces: true
+  method: gaussian
+  kernel_fraction: 0.12
+  head_band_bottom: 0.25
+  strict: true
+
+api:
+  host: 127.0.0.1
+  port: 8000
+  max_upload_mb: 512
+  return_annotated_frames: false
