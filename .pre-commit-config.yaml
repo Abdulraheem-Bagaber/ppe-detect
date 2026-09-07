@@ -28,18 +28,19 @@ repos:
 
   - repo: local
     hooks:
-      # `python -m uv` rather than `uv`: pip installs uv into the per-user
-      # scripts directory, which is not on PATH on a stock Windows box.
+      # Hooks go through scripts/dev_tool.py, which resolves the project
+      # venv by path. `uv run` here would depend on whichever PATH git
+      # hands the hook, which differs between invocation contexts.
       - id: mypy
         name: mypy
-        entry: python -m uv run mypy
+        entry: python scripts/dev_tool.py mypy
         language: system
         types: [python]
         pass_filenames: false
 
       - id: import-boundaries
         name: rule layer stays free of the model stack
-        entry: python -m uv run pytest tests/test_import_boundaries.py -q --no-cov
+        entry: python scripts/dev_tool.py pytest tests/test_import_boundaries.py -q --no-cov
         language: system
         types: [python]
         pass_filenames: false
