@@ -1,0 +1,141 @@
+[project]
+name = "ppe-detect"
+version = "0.1.0"
+description = "PPE compliance detection: independent object detection plus a config-driven geometric rule layer."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "MIT" }
+authors = [{ name = "Abdulraheem Bagaber" }]
+
+dependencies = [
+    # Core numerics / typing
+    "numpy>=1.26,<3",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "typer>=0.15",
+    # Vision stack
+    "torch>=2.5,<3",
+    "torchvision>=0.20",
+    "ultralytics>=8.3",          # AGPL-3.0 — quarantined behind the Detector protocol
+    "supervision>=0.25",
+    "opencv-python>=4.10",
+    # Serving
+    "onnxruntime>=1.20",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
+
+[project.scripts]
+ppe = "ppe.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "types-pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppe"]
+
+# --- uv -----------------------------------------------------------------
+# CPU wheels are the default so the lockfile matches the CPU-only Docker
+# image and the "assume no GPU" rule. `make gpu` swaps in the CUDA build.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+# --- ruff ---------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "B",         # bugbear
+    "UP",        # pyupgrade
+    "SIM",       # simplify
+    "C4",        # comprehensions
+    "RET",       # returns
+    "PTH",       # use pathlib
+    "ARG",       # unused arguments
+    "TID",       # tidy imports
+    "TCH",       # type-checking blocks
+    "ANN",       # annotations
+    "N",         # pep8-naming
+    "RUF",
+]
+ignore = [
+    "ANN401",    # allow typing.Any where genuinely needed
+    "B008",      # FastAPI/Typer depend on calls in defaults
+    # TC001-TC003 want annotation-only imports moved into `if TYPE_CHECKING`.
+    # That is a runtime-import-cost optimisation, and here it would mostly be
+    # noise: these imports become genuine runtime imports as the stubs are
+    # filled in. TC004/TC005/TC010, which catch real mistakes, stay enabled.
+    "TC001",
+    "TC002",
+    "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "ARG"]
+"scripts/**" = ["ANN"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+known-first-party = ["ppe"]
+
+# --- mypy ---------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src/ppe"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics.*", "supervision.*", "cv2.*", "onnxruntime.*"]
+ignore_missing_imports = true
+
+# --- pytest -------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config --cov=ppe --cov-report=term-missing"
+markers = [
+    "slow: takes more than a second (deselect with -m 'not slow')",
+    "gpu: requires a CUDA device",
+    "model: requires downloaded model weights",
+]
+
+[tool.coverage.run]
+source = ["src/ppe"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@overload",
+]

@@ -1,0 +1,45 @@
+# Run with: uv run pre-commit install
+# The same checks CI runs, so a bad commit is caught before it is pushed.
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-added-large-files
+        # Weights, videos and datasets belong outside git.
+        args: [--maxkb=2048]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # `python -m uv` rather than `uv`: pip installs uv into the per-user
+      # scripts directory, which is not on PATH on a stock Windows box.
+      - id: mypy
+        name: mypy
+        entry: python -m uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: import-boundaries
+        name: rule layer stays free of the model stack
+        entry: python -m uv run pytest tests/test_import_boundaries.py -q --no-cov
+        language: system
+        types: [python]
+        pass_filenames: false
