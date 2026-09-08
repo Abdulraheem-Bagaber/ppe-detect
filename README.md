@@ -157,6 +157,18 @@ nothing in this repo downloads data automatically:
 2. **Dataset** -> **Download Dataset** -> format **YOLOv8** -> **Download zip**
 3. Unzip so that `data/raw/worker-safety/data.yaml` exists
 
+> **Generate your own version -- do not use the default v1 export.** Roboflow's
+> published v1 of this dataset applies augmentation *before* export: 90-degree
+> rotations (including upside-down), +/-15 degree rotation, shear, blur and
+> salt-and-pepper noise, tripling 997 source images into 2,991. Upside-down
+> training images are actively hostile to this architecture -- the association
+> rule assumes a worn helmet sits near the top of its person, and in that export
+> **47% of helmets sit in the lower half of their person box**. On Roboflow,
+> fork the project and generate a version with augmentation set to none and
+> preprocessing set to resize 640x640. Ultralytics applies its own sensible
+> augmentation at training time; it does not need help, and it never flips
+> images vertically. `scripts/dataset_stats.py` fails loudly if you skip this.
+
 Then convert it into our three-class layout and check it:
 
 ```bash

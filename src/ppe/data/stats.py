@@ -1,13 +1,22 @@
 """Dataset statistics, including the checks that catch a wrong dataset early.
 
-Class balance is the obvious report. The less obvious one is the person-box
-shape check: this project's association geometry assumes ``person`` boxes are
-**full bodies**, because a helmet is matched against the upper band of the
-person's box. Several popular "helmet" datasets label *heads* instead, and
-that failure is invisible until association mysteriously never works.
+Class balance is the obvious report. The two that actually matter are checks
+on *geometry*, because this project's rule layer makes assumptions about the
+world that a dataset can silently violate:
 
-A full-body box is taller than it is wide -- typically 2-3x. A head box is
-roughly square. One aspect-ratio histogram tells you which you have.
+1. **Person boxes must be full bodies.** A helmet is matched against the upper
+   band of a person's box. Several popular "helmet" datasets label *heads*
+   instead, which the rules cannot use. Full-body boxes run 2-3x taller than
+   wide; head boxes are roughly square.
+
+2. **Helmets must sit near the top of their person.** This is the assumption
+   the entire association rule rests on, so it is worth measuring directly
+   rather than inferring. It also catches the specific way an off-the-shelf
+   export can be poisoned for this task: Roboflow and friends offer 90-degree
+   rotation and vertical-flip augmentation, which produces upside-down training
+   images where the helmet is below the boots. Nothing about class balance
+   reveals that, and a model trained on it learns that a helmet above the head
+   is optional.
 """
 
 from __future__ import annotations
@@ -17,8 +26,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from PIL import Image
+
+from ppe.core.types import PPEClass
 from ppe.data.convert import IMAGE_SUFFIXES, parse_label_row
-from ppe.data.mapping import CLASS_ORDER
+from ppe.data.mapping import CLASS_INDEX, CLASS_ORDER
 
 # Below this median height:width ratio, `person` boxes are probably heads.
 FULL_BODY_RATIO_FLOOR = 1.5
@@ -28,10 +40,17 @@ FULL_BODY_RATIO_FLOOR = 1.5
 # across 8,099 images and only 97 in its test split.
 SPARSE_INSTANCE_FLOOR = 1000
 
+# A helmet this far down its person's box (0.0 = crown, 1.0 = feet) is not
+# being worn in a normally-oriented image.
+HELMET_BAND_LIMIT = 0.5
+
+# Tolerated share of helmets below that line before the dataset is suspect.
+HELMET_BELOW_TOLERANCE = 0.05
+
 
 @dataclass(frozen=True, slots=True)
 class SplitStats:
-    """Counts and shapes for one split."""
+    """Counts and geometry for one split."""
 
     split: str
     images: int
@@ -39,6 +58,7 @@ class SplitStats:
     images_per_class: Counter[str] = field(default_factory=Counter)
     background_images: int = 0
     person_aspect_ratios: list[float] = field(default_factory=list)
+    helmet_relative_heights: list[float] = field(default_factory=list)
 
     @property
     def total_instances(self) -> int:
@@ -50,21 +70,47 @@ class SplitStats:
             return None
         return statistics.median(self.person_aspect_ratios)
 
+    def share_of_helmets_below_midline(self) -> float | None:
+        """Fraction of helmets sitting in the lower half of their person's box."""
+        if not self.helmet_relative_heights:
+            return None
+        below = sum(r >= HELMET_BAND_LIMIT for r in self.helmet_relative_heights)
+        return below / len(self.helmet_relative_heights)
 
-def collect_split_stats(split_root: Path, split: str, image_shape: tuple[int, int]) -> SplitStats:
-    """Walk one converted split and tally it.
 
-    ``image_shape`` is ``(width, height)`` and is only used to turn normalised
-    box extents back into an aspect ratio; the exact value cancels out for the
-    ratio as long as it is consistent, so the nominal training size is fine.
+def relative_helmet_heights(
+    persons: list[tuple[float, float, float, float]],
+    helmets: list[tuple[float, float]],
+) -> list[float]:
+    """Where each helmet sits inside the person box containing it.
+
+    Normalised coordinates throughout, so image size is irrelevant. Returns
+    0.0 for a helmet at the crown and 1.0 for one at the feet. A helmet inside
+    no person box is skipped rather than attributed to a guess.
     """
+    out: list[float] = []
+    for hx, hy in helmets:
+        for px, py, pw, ph in persons:
+            if ph <= 0:
+                continue
+            if abs(hx - px) <= pw / 2 and abs(hy - py) <= ph / 2:
+                out.append((hy - (py - ph / 2)) / ph)
+                break
+    return out
+
+
+def collect_split_stats(split_root: Path, split: str) -> SplitStats:
+    """Walk one converted split and tally it."""
     images_dir = split_root / "images"
     labels_dir = split_root / "labels"
-    width, height = image_shape
+
+    person_id = CLASS_INDEX[PPEClass.PERSON]
+    helmet_id = CLASS_INDEX[PPEClass.HELMET]
 
     instances: Counter[str] = Counter()
     images_per_class: Counter[str] = Counter()
     ratios: list[float] = []
+    helmet_heights: list[float] = []
     images = 0
     background = 0
 
@@ -80,14 +126,27 @@ def collect_split_stats(split_root: Path, split: str, image_shape: tuple[int, in
         if not rows:
             background += 1
             continue
+
+        with Image.open(image_path) as im:
+            width, height = im.size
+
+        persons: list[tuple[float, float, float, float]] = []
+        helmets: list[tuple[float, float]] = []
         seen: set[str] = set()
+
         for row in rows:
-            class_id, (_, _, w, h) = parse_label_row(row)
+            class_id, (cx, cy, w, h) = parse_label_row(row)
             name = CLASS_ORDER[class_id].value
             instances[name] += 1
             seen.add(name)
-            if name == "person" and w > 0:
-                ratios.append((h * height) / (w * width))
+            if class_id == person_id:
+                persons.append((cx, cy, w, h))
+                if w > 0:
+                    ratios.append((h * height) / (w * width))
+            elif class_id == helmet_id:
+                helmets.append((cx, cy))
+
+        helmet_heights.extend(relative_helmet_heights(persons, helmets))
         images_per_class.update(seen)
 
     return SplitStats(
@@ -97,6 +156,7 @@ def collect_split_stats(split_root: Path, split: str, image_shape: tuple[int, in
         images_per_class=images_per_class,
         background_images=background,
         person_aspect_ratios=ratios,
+        helmet_relative_heights=helmet_heights,
     )
 
 
@@ -137,20 +197,8 @@ def format_report(all_stats: list[SplitStats]) -> str:
 def _verdicts(all_stats: list[SplitStats], totals: Counter[str]) -> list[str]:
     """The checks worth failing a dataset over."""
     out = ["Sanity checks:"]
-
-    ratios = [r for s in all_stats for r in s.person_aspect_ratios]
-    if not ratios:
-        out.append("  [!!] no person boxes at all -- this dataset cannot drive association")
-    else:
-        median = statistics.median(ratios)
-        if median < FULL_BODY_RATIO_FLOOR:
-            out.append(
-                f"  [!!] median person box is {median:.2f}x taller than wide. Full-body "
-                "boxes are usually 2-3x; this looks like HEAD boxes, which the "
-                "association rules cannot use. Check the dataset before training."
-            )
-        else:
-            out.append(f"  [ok] median person box {median:.2f}x taller than wide (full-body)")
+    out.extend(_helmet_orientation_verdict(all_stats))
+    out.extend(_person_shape_verdict(all_stats))
 
     for name in ("helmet", "vest"):
         count = totals.get(name, 0)
@@ -172,3 +220,46 @@ def _verdicts(all_stats: list[SplitStats], totals: Counter[str]) -> list[str]:
             out.append(f"  [!] split {s.split!r} has no {', '.join(missing)} instances")
 
     return out
+
+
+def _helmet_orientation_verdict(all_stats: list[SplitStats]) -> list[str]:
+    """The check that matters most: is a helmet actually above its wearer?"""
+    heights = [r for s in all_stats for r in s.helmet_relative_heights]
+    if not heights:
+        return ["  [!] no helmet sits inside any person box; cannot check orientation"]
+
+    below = sum(r >= HELMET_BAND_LIMIT for r in heights) / len(heights)
+    median = statistics.median(heights)
+    if below <= HELMET_BELOW_TOLERANCE:
+        return [
+            f"  [ok] {1 - below:.1%} of helmets sit in the upper half of their person "
+            f"(median {median:.2f} down the box)"
+        ]
+    return [
+        f"  [!!] {below:.1%} of helmets sit in the LOWER half of their person box "
+        f"(median {median:.2f} down the box).",
+        "       The association rule assumes a worn helmet is near the top of the",
+        "       person, and this dataset violates that. The usual cause is rotation",
+        "       or vertical-flip augmentation baked into the export: check the source",
+        "       README for a '90-degree rotation' or 'flip' step and re-export without",
+        "       it. Training on this teaches the detector that a helmet below the",
+        "       boots is perfectly normal.",
+    ]
+
+
+def _person_shape_verdict(all_stats: list[SplitStats]) -> list[str]:
+    """Full bodies, or heads?"""
+    ratios = [r for s in all_stats for r in s.person_aspect_ratios]
+    if not ratios:
+        return ["  [!!] no person boxes at all -- this dataset cannot drive association"]
+
+    median = statistics.median(ratios)
+    if median >= FULL_BODY_RATIO_FLOOR:
+        return [f"  [ok] median person box {median:.2f}x taller than wide (full-body)"]
+    return [
+        f"  [!!] median person box is only {median:.2f}x taller than wide; full-body "
+        "boxes run 2-3x.",
+        "       Either the dataset labels HEADS rather than bodies, which the",
+        "       association rules cannot use at all, or the images are rotation-",
+        "       augmented. The helmet-orientation check above separates the two.",
+    ]

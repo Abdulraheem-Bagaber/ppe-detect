@@ -23,12 +23,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="data/processed/worker-safety",
         help="Converted dataset root, containing train/ val/ test/.",
     )
-    parser.add_argument(
-        "--imgsz",
-        type=int,
-        default=640,
-        help="Nominal image size used to turn normalised extents into aspect ratios.",
-    )
     parser.add_argument("--out", default=None, help="Also write the report to this file.")
     return parser.parse_args(argv)
 
@@ -44,9 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     stats = [
-        collect_split_stats(root / split, split, (args.imgsz, args.imgsz))
-        for split in SPLITS
-        if (root / split).is_dir()
+        collect_split_stats(root / split, split) for split in SPLITS if (root / split).is_dir()
     ]
     if not stats:
         print(f"error: {root} contains no train/ val/ test/ directories", file=sys.stderr)
