@@ -1,0 +1,39 @@
+# Source dataset -> our three-class vocabulary.
+#
+# Mapping is by class NAME, never by index. Roboflow re-exports can reorder
+# classes without warning, and an index-based mapping would silently relabel
+# every helmet as a vest rather than failing.
+#
+# Download (needs a free Roboflow account, see README):
+#   https://universe.roboflow.com/computer-vision/worker-safety
+#   Download Dataset -> YOLOv8 -> unzip into data/raw/worker-safety/
+
+name: worker-safety
+source_url: https://universe.roboflow.com/computer-vision/worker-safety
+licence: CC BY 4.0
+attribution: >-
+  Worker-Safety dataset by the "computer vision" workspace on Roboflow
+  Universe, licensed CC BY 4.0. Also distributed as construction-safety-gsnvb
+  in the Intel-sponsored RF100 benchmark.
+
+# Directory names inside the source export, mapped to our split names.
+splits:
+  train: train
+  val: valid
+  test: test
+
+# Source class name -> our class. Anything not listed here must appear in
+# `drop`, or conversion fails: an unmapped class is a decision nobody made.
+class_map:
+  person: person
+  helmet: helmet
+  vest: vest
+
+# Deliberately discarded. These are the negative classes this project exists
+# to avoid: compliance is derived by the rule layer from the absence of an
+# association, never read off a label. Dropping them loses nothing, because
+# each of these images still carries the real person/helmet/vest boxes.
+drop:
+  - no-helmet
+  - no-vest
+  - psnumber@2517 # annotation artefact present in the published export

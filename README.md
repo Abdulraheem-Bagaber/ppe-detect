@@ -3,9 +3,8 @@
 PPE compliance detection for work-site video: find people who are not wearing a
 hard hat or a high-visibility vest, and raise an event.
 
-**Status: Phase 0 (scaffold).** No model has been trained yet. Every metric
-table below reads `TBD` and will stay that way until it has actually been
-measured.
+**Status: Phase 1 (data).** No model has been trained yet. Every metric table
+below reads `TBD` and will stay that way until it has actually been measured.
 
 ---
 
@@ -76,6 +75,7 @@ Layout:
 | `src/ppe/privacy/` | Face blurring, applied before anything is emitted. |
 | `src/ppe/api/` | FastAPI service. |
 | `src/ppe/config/` | Pydantic schema and YAML loading. |
+| `src/ppe/data/` | Dataset conversion, manifest, stats. Not on the runtime path. |
 | `scripts/` | Data prep, training, evaluation, export, benchmarks. |
 
 ### A note on licensing
@@ -139,6 +139,79 @@ slow. To use a local CUDA card:
 
 Device selection is automatic at runtime (`model.device: auto`), so no code
 changes either way.
+
+## Data
+
+### Getting the dataset
+
+The project uses [**Worker-Safety**](https://universe.roboflow.com/computer-vision/worker-safety)
+(1,206 images, **CC BY 4.0**), also distributed as `construction-safety-gsnvb` in
+Intel's RF100 benchmark. It is the only shortlisted set that has full-body
+`person` boxes, both PPE classes, a published split, and a licence clean enough
+to put in a public repo.
+
+Roboflow requires a free account to export, so this step is manual by design --
+nothing in this repo downloads data automatically:
+
+1. Sign in at [universe.roboflow.com](https://universe.roboflow.com/computer-vision/worker-safety)
+2. **Dataset** -> **Download Dataset** -> format **YOLOv8** -> **Download zip**
+3. Unzip so that `data/raw/worker-safety/data.yaml` exists
+
+Then convert it into our three-class layout and check it:
+
+```bash
+uv run python scripts/prepare_data.py
+```
+
+```bash
+uv run python scripts/dataset_stats.py
+```
+
+Conversion drops the source `no-helmet` and `no-vest` classes. That is the
+whole design in one line: compliance is derived by the rule layer from a
+missing association, never read off a label.
+
+The mapping is declared in `configs/datasets/worker_safety.yaml` **by class
+name, not index** -- a Roboflow re-export that reorders classes would otherwise
+relabel every helmet as a vest without raising. Adding a second dataset is a
+new YAML file, not a new code path. The split is committed to
+`configs/manifests/worker-safety.json` so a reported metric stays reproducible.
+
+### Datasets considered and rejected
+
+| Dataset | Why not |
+| --- | --- |
+| SHWD | Classes are `hat` / `person`, where `person` means *a head without a helmet*. Head boxes only, negative class baked into the labels. |
+| Hard Hat Workers | Derived from SHWD; `Workers` / `Head` / `Hard Hat`, no vest. |
+| SH17 | 8,099 images and a real `Person` class, but only 927 helmet and **530 vest** instances (97 vests in test). Too sparse to train or honestly evaluate. |
+| Pictor-v3 | Right classes (worker/hat/vest) and peer-reviewed, but no stated licence. |
+| Ultralytics Construction-PPE | Good structure, but AGPL-3.0 on top of an already-AGPL detector. |
+
+`scripts/dataset_stats.py` encodes the two checks that eliminated three of
+these: a **person-box aspect-ratio check** (full-body boxes run 2-3x taller
+than wide; roughly square means head boxes, and the association rules cannot
+use them) and a **sparse-class check** calibrated against SH17's vest count.
+
+### A known counter-argument
+
+Nath, Behzadan & Paal (2020), the paper behind Pictor-v3, compared this
+project's architecture against the alternative it rejects:
+
+- *Approach-1*: detect worker/hat/vest independently, then verify -- **this project**
+- *Approach-2*: detect combined `W`/`WH`/`WV`/`WHV` classes directly
+
+They found Approach-2 scored higher, at 72.3% mAP. That result is about
+detection mAP, which is explicitly not this system's headline metric, and it
+says nothing about explainability, tunability without retraining, or
+unit-testability. The trade is made deliberately, and the violation-level
+metrics below are where the cost of it should show up.
+
+### Evaluation footage is a known gap
+
+There is no public event-level annotated PPE **video** benchmark. Every
+published result on temporal PPE compliance uses private footage. The Phase 5
+violation precision/recall numbers therefore require hand-annotated clips,
+which do not exist yet. Tracked as the longest-lead item in the project.
 
 ## Configuration
 
@@ -211,8 +284,8 @@ so effort goes where it pays.
 | Phase | Scope | State |
 | --- | --- | --- |
 | 0 | Scaffold, tooling, interfaces | Done |
-| 1 | Dataset preparation and class balance report | Next |
-| 2 | yolov8n baseline, fixed seed, committed split manifest | |
+| 1 | Dataset preparation and class balance report | Scripts done; awaiting download |
+| 2 | yolov8n baseline, fixed seed, committed split manifest | Next |
 | 3 | Rule layer, tests written first | |
 | 4 | ByteTrack, debounce, work-area zones | |
 | 5 | Violation-level evaluation harness | |
