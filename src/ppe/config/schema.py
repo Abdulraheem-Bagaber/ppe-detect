@@ -70,10 +70,21 @@ class ItemRule(_Base):
         description="Items below this are ignored for association.",
     )
 
+    # Once a candidate clears the gates above, these decide which person wins
+    # it when several are plausible. They are weights rather than constants in
+    # code so the ranking can be retuned for a site without a release.
+    weight_containment: float = Field(default=0.6, ge=0.0, le=1.0)
+    weight_band: float = Field(default=0.2, ge=0.0, le=1.0)
+    weight_centre: float = Field(default=0.2, ge=0.0, le=1.0)
+
     @model_validator(mode="after")
     def _band_ordered(self) -> ItemRule:
         if self.band_top >= self.band_bottom:
             msg = f"band_top ({self.band_top}) must be < band_bottom ({self.band_bottom})"
+            raise ValueError(msg)
+        total = self.weight_containment + self.weight_band + self.weight_centre
+        if abs(total - 1.0) > 1e-6:
+            msg = f"score weights must sum to 1.0, got {total}"
             raise ValueError(msg)
         return self
 
@@ -107,6 +118,15 @@ class AssociationConfig(_Base):
         description=(
             "If the region a required item must occupy is outside the frame, record "
             "a skip reason instead of asserting a violation."
+        ),
+    )
+    min_band_visibility: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of an item's expected band that must lie inside the frame "
+            "before the person is judged for that item."
         ),
     )
 
