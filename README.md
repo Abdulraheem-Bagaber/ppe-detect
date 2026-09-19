@@ -3,8 +3,11 @@
 PPE compliance detection for work-site video: find people who are not wearing a
 hard hat or a high-visibility vest, and raise an event.
 
-**Status: Phase 1 (data).** No model has been trained yet. Every metric table
-below reads `TBD` and will stay that way until it has actually been measured.
+**Status: all phases implemented; no baseline trained yet.** Every module is
+built and tested (307 tests). What is missing is *numbers*: a real training
+run needs a clean dataset export and a CUDA install, and the violation metrics
+need annotated video that does not exist publicly. Every table below reads
+`TBD` and will stay that way until it has actually been measured.
 
 ---
 
@@ -76,6 +79,7 @@ Layout:
 | `src/ppe/api/` | FastAPI service. |
 | `src/ppe/config/` | Pydantic schema and YAML loading. |
 | `src/ppe/data/` | Dataset conversion, manifest, stats. Not on the runtime path. |
+| `src/ppe/eval/` | Violation scoring and false-positive diagnosis. Not on the runtime path. |
 | `scripts/` | Data prep, training, evaluation, export, benchmarks. |
 
 ### A note on licensing
@@ -126,6 +130,10 @@ On Windows, `make` is not installed; `make.ps1` dispatches the same targets:
 | `check` | All of the above, as CI runs it |
 | `prepare-data` / `train` / `eval` | Phase 1, 2 and 5 pipelines |
 | `export` / `benchmark` / `serve` | Phase 6 and 7 |
+
+The full suite runs in about 5 seconds. One test is marked `slow` because
+OpenCV's FFmpeg backend waits 30 seconds before giving up on an unreachable
+stream; `test-fast` skips it.
 
 ### CPU by default, GPU on request
 
@@ -293,16 +301,31 @@ so effort goes where it pays.
 
 ## Roadmap
 
-| Phase | Scope | State |
-| --- | --- | --- |
-| 0 | Scaffold, tooling, interfaces | Done |
-| 1 | Dataset preparation and class balance report | Scripts done; awaiting download |
-| 2 | yolov8n baseline, fixed seed, committed split manifest | Next |
-| 3 | Rule layer, tests written first | |
-| 4 | ByteTrack, debounce, work-area zones | |
-| 5 | Violation-level evaluation harness | |
-| 6 | ONNX export with parity test, FastAPI, Docker | |
-| 7 | Face blurring, backend benchmarks | |
+| Phase | Scope | Code | Measured |
+| --- | --- | --- | --- |
+| 0 | Scaffold, tooling, interfaces | Done | n/a |
+| 1 | Dataset preparation and class balance report | Done | Done |
+| 2 | yolov8n baseline, fixed seed, split manifest | Done | **Blocked** |
+| 3 | Rule layer, tests written first | Done | n/a |
+| 4 | ByteTrack, debounce, work-area zones | Done | n/a |
+| 5 | Violation-level evaluation harness | Done | **Blocked** |
+| 6 | ONNX export with parity test, FastAPI, Docker | Done | **Blocked** |
+| 7 | Face blurring, backend benchmarks | Done | **Blocked** |
+
+### What "blocked" means
+
+Three things gate every number in this README, and none of them are code:
+
+1. **A clean dataset export.** Roboflow's published v1 is rotation-augmented
+   (see above). Regenerate the version with augmentation off before training
+   anything you intend to report.
+2. **A CUDA install.** The default environment is CPU-only by design, which
+   matches the Docker image but makes training impractically slow. `make gpu`
+   swaps in the CUDA build.
+3. **Annotated video.** There is no public event-level PPE video benchmark.
+   `configs/eval/clips.yaml` is committed empty with its schema documented;
+   until clips are annotated there, the violation table cannot be filled in
+   honestly. This is the longest-lead item in the project.
 
 Out of scope by choice: gloves, boots, harnesses and face shields (two PPE
 classes done properly beats six done badly), and a web dashboard (the API and
