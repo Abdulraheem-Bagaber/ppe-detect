@@ -1,0 +1,17 @@
+.git/
+.venv/
+data/
+models/
+runs/
+reports/
+outputs/
+tests/
+docs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+**/__pycache__/
+*.pt
+*.onnx
+*.mp4

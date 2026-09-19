@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ppe-detect:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Everything in configs/default.yaml can be overridden this way; the
+      # image ships one config and is retuned per site without a rebuild.
+      PPE_MODEL__BACKEND: onnx
+      PPE_MODEL__WEIGHTS: /app/models/ppe.onnx
+      PPE_MODEL__DEVICE: cpu
+      PPE_PRIVACY__BLUR_FACES: "true"
+    volumes:
+      # Weights are mounted read-only; the service never writes to them.
+      - ../models:/app/models:ro
+      - ../configs:/app/configs:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

@@ -1,0 +1,30 @@
+# Ground truth for violation-level evaluation.
+#
+# This file is EMPTY on purpose. There is no public event-level annotated PPE
+# video benchmark -- every published result on temporal PPE compliance uses
+# private footage. The numbers in the README's violation table therefore stay
+# TBD until real clips are annotated here.
+#
+# To add one, watch a clip and write down each stretch where a person in the
+# work area was non-compliant:
+#
+# name: site-a
+# clips:
+#   - clip: data/clips/gate_morning.mp4
+#     duration_s: 612.0        # required: the false-alarms/hour denominator
+#     fps: 25.0
+#     annotator: your name
+#     violations:
+#       - person_label: blue jacket, near the scaffold
+#         missing: [helmet]
+#         start_s: 12.4
+#         end_s: 41.0
+#         box_hint: [820, 240, 900, 520]   # optional, disambiguates two people
+#         note: takes it off to wipe his forehead
+#
+# person_label is a human's description, never a track id: tying ground truth
+# to track ids would make the evaluation depend on the tracker it is meant to
+# be evaluating.
+
+name: unannotated
+clips: []
