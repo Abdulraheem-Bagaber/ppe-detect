@@ -797,7 +797,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "supervision", specifier = ">=0.25" },
+    { name = "supervision", specifier = ">=0.25,<0.31" },
     { name = "torch", specifier = ">=2.5,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", specifier = ">=0.20", index = "https://download.pytorch.org/whl/cpu" },
     { name = "typer", specifier = ">=0.15" },

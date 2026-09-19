@@ -18,7 +18,10 @@ dependencies = [
     "torch>=2.5,<3",
     "torchvision>=0.20",
     "ultralytics>=8.3",          # AGPL-3.0 — quarantined behind the Detector protocol
-    "supervision>=0.25",
+    # ByteTrack is deprecated in supervision and removed in 0.31; pinned below
+    # that until we swap trackers. The Tracker protocol is what makes that a
+    # one-file change rather than a refactor.
+    "supervision>=0.25,<0.31",
     "opencv-python>=4.10",
     "pillow>=10.0",
     # Serving
@@ -115,8 +118,12 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
+# These ship no usable stubs; ultralytics in particular re-exports YOLO
+# without declaring it, which mypy correctly objects to and we cannot fix.
 module = ["ultralytics.*", "supervision.*", "cv2.*", "onnxruntime.*"]
 ignore_missing_imports = true
+follow_imports = "skip"
+disable_error_code = ["attr-defined"]
 
 # --- pytest -------------------------------------------------------------
 [tool.pytest.ini_options]
