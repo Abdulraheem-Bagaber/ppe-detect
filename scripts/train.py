@@ -87,6 +87,35 @@ def git_commit() -> str:
     return result.stdout.strip() or "unknown"
 
 
+def warn_if_gpu_is_being_wasted(device: str) -> None:
+    """Shout if there is an NVIDIA card here but torch cannot use it.
+
+    This exact situation cost an hour once: `uv run` re-syncs from uv.lock,
+    which pins the CPU build, silently undoing `make gpu`. Training then runs
+    ~30x slower with no error anywhere. A CPU run is a legitimate choice, but
+    it should never be an accident.
+    """
+    if device != "cpu":
+        return
+
+    import shutil
+
+    import torch
+
+    if getattr(torch.version, "cuda", None) is not None:
+        return  # CUDA build present; the machine genuinely has no usable GPU
+    if shutil.which("nvidia-smi") is None:
+        return  # no NVIDIA hardware; CPU is simply correct here
+
+    print(
+        "\nWARNING: an NVIDIA GPU is present but this is a CPU-only torch build,\n"
+        "         so training will be roughly 30x slower. Fix with:\n"
+        "             make gpu      (Windows: .\\make.ps1 gpu)\n"
+        "         then re-run with --no-sync, because plain `uv run` reverts it.\n",
+        file=sys.stderr,
+    )
+
+
 def per_class_metrics(results: Any, names: dict[int, str]) -> dict[str, dict[str, float]]:
     """Pull per-class mAP out of an ultralytics validation result.
 
@@ -150,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     device = resolve_device(args.device if args.device is not None else config.model.device)
     run_name = args.name or f"baseline-{datetime.now(UTC):%Y%m%d-%H%M%S}"
 
+    warn_if_gpu_is_being_wasted(device)
     print(f"device={device}  imgsz={imgsz}  epochs={args.epochs}  seed={config.seed}")
 
     from ultralytics import YOLO

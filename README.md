@@ -3,11 +3,10 @@
 PPE compliance detection for work-site video: find people who are not wearing a
 hard hat or a high-visibility vest, and raise an event.
 
-**Status: all phases implemented; no baseline trained yet.** Every module is
-built and tested (307 tests). What is missing is *numbers*: a real training
-run needs a clean dataset export and a CUDA install, and the violation metrics
-need annotated video that does not exist publicly. Every table below reads
-`TBD` and will stay that way until it has actually been measured.
+**Status: baseline trained and measured; violation metrics still blocked.**
+All seven phases are implemented and tested (307 tests). Detection metrics
+below are real. The violation-level table stays `TBD` until annotated video
+exists, because no public dataset provides it.
 
 ---
 
@@ -259,12 +258,27 @@ Phases 2, 5 and 7 and will be filled in from real runs only.
 
 ### Detection (held-out test set)
 
+yolov8n, 50 epochs, seed 1337, 997 training images, RTX 2060, 57 minutes.
+Split committed as `configs/manifests/worker-safety.json`; full run config and
+weights hash in `runs/train/baseline/run_manifest.json`.
+
 | Class | mAP@50 | mAP@50-95 | Precision | Recall |
 | --- | --- | --- | --- | --- |
-| person | TBD | TBD | TBD | TBD |
-| helmet | TBD | TBD | TBD | TBD |
-| vest | TBD | TBD | TBD | TBD |
-| **all** | **TBD** | **TBD** | **TBD** | **TBD** |
+| person | 0.880 | 0.572 | 0.849 | 0.874 |
+| helmet | 0.927 | 0.490 | 0.895 | 0.921 |
+| vest | 0.847 | 0.447 | 0.901 | **0.744** |
+| **all** | **0.885** | **0.503** | **0.882** | **0.846** |
+
+**Read the vest row, not the average.** Vest recall of 0.744 means roughly one
+worn vest in four is not detected. In a system that infers non-compliance from
+*absence*, a missed vest becomes a person falsely accused of not wearing one --
+so this single number is the best available predictor of false alarms before
+any video has been scored. It is also the class with the least training data
+(1,343 instances against 2,543 helmets), which points at where more data would
+pay.
+
+No tuning was done. This is the documented baseline the next change gets
+compared against.
 
 ### Violation events — the headline metric
 
@@ -305,7 +319,7 @@ so effort goes where it pays.
 | --- | --- | --- | --- |
 | 0 | Scaffold, tooling, interfaces | Done | n/a |
 | 1 | Dataset preparation and class balance report | Done | Done |
-| 2 | yolov8n baseline, fixed seed, split manifest | Done | **Blocked** |
+| 2 | yolov8n baseline, fixed seed, split manifest | Done | **Done** |
 | 3 | Rule layer, tests written first | Done | n/a |
 | 4 | ByteTrack, debounce, work-area zones | Done | n/a |
 | 5 | Violation-level evaluation harness | Done | **Blocked** |
@@ -316,16 +330,17 @@ so effort goes where it pays.
 
 Three things gate every number in this README, and none of them are code:
 
-1. **A clean dataset export.** Roboflow's published v1 is rotation-augmented
-   (see above). Regenerate the version with augmentation off before training
-   anything you intend to report.
-2. **A CUDA install.** The default environment is CPU-only by design, which
-   matches the Docker image but makes training impractically slow. `make gpu`
-   swaps in the CUDA build.
-3. **Annotated video.** There is no public event-level PPE video benchmark.
-   `configs/eval/clips.yaml` is committed empty with its schema documented;
-   until clips are annotated there, the violation table cannot be filled in
-   honestly. This is the longest-lead item in the project.
+1. ~~A clean dataset export.~~ Done -- regenerated without augmentation.
+2. ~~A CUDA install.~~ Done -- `make gpu`, then train with `--no-sync`.
+3. **Annotated video.** Still open. There is no public event-level PPE video
+   benchmark. `configs/eval/clips.yaml` is committed empty with its schema
+   documented; until clips are annotated there, the violation table cannot be
+   filled in honestly. This is the longest-lead item in the project.
+
+Note on `--no-sync`: `uv run` re-syncs from `uv.lock`, which pins CPU torch, so
+a plain `uv run` silently undoes `make gpu`. The ML targets in the Makefile pass
+`--no-sync` for that reason, and `scripts/train.py` warns if it finds an NVIDIA
+card alongside a CPU-only torch build.
 
 Out of scope by choice: gloves, boots, harnesses and face shields (two PPE
 classes done properly beats six done badly), and a web dashboard (the API and

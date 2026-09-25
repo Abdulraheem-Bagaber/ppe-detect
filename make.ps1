@@ -92,8 +92,10 @@ switch ($Target) {
     'install'      { Invoke-Uv @('sync', '--dev') }
     'hooks'        { Invoke-Uv @('run', 'pre-commit', 'install') }
     'gpu'          {
-        Invoke-Uv @('pip', 'install', '--reinstall',
-            '--index-url', 'https://download.pytorch.org/whl/cu124',
+        # --python is required: without it uv resolves the ambient
+        # interpreter, which is the system Python and is not writable.
+        Invoke-Uv @('pip', 'install', '--python', '.venv', '--reinstall',
+            '--index-url', 'https://download.pytorch.org/whl/cu126',
             'torch', 'torchvision')
     }
     'test'         { Invoke-Uv (@('run', 'pytest') + $Rest) }
@@ -112,11 +114,11 @@ switch ($Target) {
         & $PSCommandPath 'typecheck'
         & $PSCommandPath 'test'
     }
-    'prepare-data' { Invoke-Uv (@('run', 'python', 'scripts/prepare_data.py') + $Rest) }
-    'train'        { Invoke-Uv (@('run', 'python', 'scripts/train.py') + $Rest) }
-    'eval'         { Invoke-Uv (@('run', 'python', 'scripts/evaluate.py') + $Rest) }
-    'export'       { Invoke-Uv (@('run', 'python', 'scripts/export_onnx.py') + $Rest) }
-    'benchmark'    { Invoke-Uv (@('run', 'python', 'scripts/benchmark.py') + $Rest) }
+    'prepare-data' { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/prepare_data.py') + $Rest) }
+    'train'        { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/train.py') + $Rest) }
+    'eval'         { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/evaluate.py') + $Rest) }
+    'export'       { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/export_onnx.py') + $Rest) }
+    'benchmark'    { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/benchmark.py') + $Rest) }
     'serve'        {
         Invoke-Uv @('run', 'uvicorn', 'ppe.api.app:create_app', '--factory', '--reload')
     }
