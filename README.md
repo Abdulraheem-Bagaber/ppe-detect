@@ -306,12 +306,39 @@ so effort goes where it pays.
 
 ### Inference performance
 
+Intel i5-10300H / RTX 2060, 640px, 50 frames, measured after warmup.
+p95 rather than a mean, because the occasional slow frame is what decides
+whether a live stream keeps up.
+
 | Backend | Device | Latency p50 | Latency p95 | FPS |
 | --- | --- | --- | --- | --- |
-| PyTorch | CPU | TBD | TBD | TBD |
-| ONNX Runtime | CPU | TBD | TBD | TBD |
-| ONNX INT8 | CPU | TBD | TBD | TBD |
-| PyTorch | CUDA | TBD | TBD | TBD |
+| PyTorch | CPU | 83.7 ms | 118.4 ms | 11.9 |
+| ONNX Runtime | CPU | 77.5 ms | 114.1 ms | 12.9 |
+| ONNX INT8 | CPU | not measured | | |
+| PyTorch | CUDA | 18.2 ms | 21.5 ms | 55.1 |
+
+ONNX buys about 8% on CPU here -- real but modest, and less than the usual
+claim. The honest reading is that at 640px on yolov8n the bottleneck is not
+graph execution overhead. INT8 quantisation is the untried lever and is not
+reported because it has not been run.
+
+**CPU is enough for this job.** A 12 FPS CPU path comfortably serves a 5 FPS
+camera, which is a sane sampling rate for PPE compliance -- the debouncer needs
+half a second of agreement anyway, so frames beyond that add cost without
+adding evidence. The CUDA row is what makes *training* practical, not what
+makes serving possible.
+
+### ONNX export parity
+
+| | Measured | Tolerance |
+| --- | --- | --- |
+| Box coordinate drift | 0.00104 px | 0.05 px |
+| Class score drift | 1.4e-07 | 1e-04 |
+
+The two are checked separately because they live on different scales -- box
+coordinates in pixels on a 0-640 image, class scores in 0-1. A single absolute
+threshold flagged a thousandth-of-a-pixel difference as a failure, which was a
+bug in the check rather than in the export.
 
 ## Roadmap
 
@@ -323,8 +350,8 @@ so effort goes where it pays.
 | 3 | Rule layer, tests written first | Done | n/a |
 | 4 | ByteTrack, debounce, work-area zones | Done | n/a |
 | 5 | Violation-level evaluation harness | Done | **Blocked** |
-| 6 | ONNX export with parity test, FastAPI, Docker | Done | **Blocked** |
-| 7 | Face blurring, backend benchmarks | Done | **Blocked** |
+| 6 | ONNX export with parity test, FastAPI, Docker | Done | **Done** |
+| 7 | Face blurring, backend benchmarks | Done | **Done** |
 
 ### What "blocked" means
 

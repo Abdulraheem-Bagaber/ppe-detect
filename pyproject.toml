@@ -25,7 +25,9 @@ dependencies = [
     "opencv-python>=4.10",
     "pillow>=10.0",
     # Serving
-    "onnxruntime>=1.20",
+    "onnx>=1.17",        # writes the graph during export
+    "onnxslim>=0.1.48",  # ultralytics uses this for simplify=True
+    "onnxruntime>=1.20", # runs the graph in the served path
     "fastapi>=0.115",
     "python-multipart>=0.0.12",  # required by FastAPI for file uploads
     "uvicorn[standard]>=0.32",
