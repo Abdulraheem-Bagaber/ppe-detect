@@ -7,6 +7,13 @@ requires-python = ">=3.11,<3.12"
 license = { text = "MIT" }
 authors = [{ name = "Abdulraheem Bagaber" }]
 
+# The base dependency set is exactly what SERVING needs, and nothing else.
+# Neither ultralytics nor torch appears here. That is the point: the served
+# path runs ONNX behind the Detector protocol, so `uv sync` with no extras
+# produces a deployable environment with no training stack in it -- and, more
+# importantly, no AGPL-licensed code in the deployed artefact.
+#
+# Training pulls those in via the cpu/gpu extras below.
 dependencies = [
     # Core numerics / typing
     "numpy>=1.26,<3",
@@ -14,20 +21,14 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "typer>=0.15",
-    # Vision stack. torch/torchvision are NOT here: they live in the cpu and
-    # gpu extras below, because which build you want is a real choice and
-    # the lockfile should record both rather than one plus a manual override.
-    "ultralytics>=8.3",          # AGPL-3.0 — quarantined behind the Detector protocol
-    # ByteTrack is deprecated in supervision and removed in 0.31; pinned below
-    # that until we swap trackers. The Tracker protocol is what makes that a
-    # one-file change rather than a refactor.
+    "pillow>=10.0",
+    # Vision. supervision supplies ByteTrack and needs no torch of its own.
+    # It is pinned below 0.31 because ByteTrack is deprecated and removed
+    # there; the Tracker protocol is what makes replacing it one file.
     "supervision>=0.25,<0.31",
     "opencv-python>=4.10",
-    "pillow>=10.0",
-    # Serving
-    "onnx>=1.17",        # writes the graph during export
-    "onnxslim>=0.1.48",  # ultralytics uses this for simplify=True
-    "onnxruntime>=1.20", # runs the graph in the served path
+    # Inference and transport
+    "onnxruntime>=1.20", # runs the exported graph
     "fastapi>=0.115",
     "python-multipart>=0.0.12",  # required by FastAPI for file uploads
     "uvicorn[standard]>=0.32",
@@ -70,9 +71,24 @@ artifacts = ["src/ppe/api/static/*.html"]
 #
 # The choice is remembered in a gitignored `.torch` file, so it only has to be
 # made once per machine.
+# Each extra is a complete TRAINING environment: the AGPL detector, the
+# matching torch build, and the tooling that writes an ONNX graph. Serving
+# needs none of it.
 [project.optional-dependencies]
-cpu = ["torch>=2.5,<3", "torchvision>=0.20"]
-gpu = ["torch>=2.5,<3", "torchvision>=0.20"]
+cpu = [
+    "ultralytics>=8.3",  # AGPL-3.0, and the only thing that pulls torch
+    "torch>=2.5,<3",
+    "torchvision>=0.20",
+    "onnx>=1.17",        # writes the graph during export
+    "onnxslim>=0.1.48",  # ultralytics uses this for simplify=True
+]
+gpu = [
+    "ultralytics>=8.3",
+    "torch>=2.5,<3",
+    "torchvision>=0.20",
+    "onnx>=1.17",
+    "onnxslim>=0.1.48",
+]
 
 [tool.uv]
 conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]

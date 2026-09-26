@@ -17,16 +17,27 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+# Pinned to the version that wrote uv.lock. An older uv cannot read a
+# newer lockfile, and the resolver version is a reproducibility input
+# exactly like the pinned packages are.
+COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
 # Dependency layer first, so a source change does not re-resolve the world.
 COPY pyproject.toml uv.lock README.md ./
+# NO extras. The base dependency set is exactly the serving path: ONNX
+# Runtime behind the Detector protocol, with no ultralytics and no torch.
+# That is the protocol boundary paying for itself twice -- it strips the
+# training stack out of the image, and it keeps AGPL-licensed code out of
+# the deployed artefact entirely.
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev
+
+# The served backend is ONNX. Training happens outside the image, with
+# `uv sync --extra cpu` or `--extra gpu`; see the README.
 
 # ---- runtime -------------------------------------------------------------
 FROM python:3.11-slim-bookworm AS runtime
