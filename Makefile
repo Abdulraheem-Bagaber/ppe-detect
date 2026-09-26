@@ -54,8 +54,11 @@ export:  ## Phase 6: export to ONNX and verify parity
 benchmark:  ## Phase 7: latency and throughput across backends
 	$(UV) run --no-sync python scripts/benchmark.py
 
-serve:  ## Phase 6: run the API locally
-	$(UV) run uvicorn ppe.api.app:create_app --factory --reload
+serve:  ## Run the API locally
+	$(UV) run --no-sync uvicorn ppe.api.app:create_app --factory --reload
+
+viewer:  ## Run the API and open the local debug viewer at http://127.0.0.1:8000
+	PPE_MODEL__WEIGHTS=runs/train/baseline/weights/best.pt \n	$(UV) run --no-sync uvicorn ppe.api.app:create_app --factory --port 8000
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml

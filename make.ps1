@@ -78,7 +78,8 @@ $targets = [ordered]@{
     'eval'         = 'Phase 5: violation-level metrics and error breakdown'
     'export'       = 'Phase 6: export to ONNX and verify parity'
     'benchmark'    = 'Phase 7: latency and throughput across backends'
-    'serve'        = 'Phase 6: run the API locally'
+    'serve'        = 'Run the API locally'
+    'viewer'       = 'Run the API and open the local debug viewer'
     'clean'        = 'Remove caches and build artefacts'
 }
 
@@ -120,7 +121,14 @@ switch ($Target) {
     'export'       { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/export_onnx.py') + $Rest) }
     'benchmark'    { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/benchmark.py') + $Rest) }
     'serve'        {
-        Invoke-Uv @('run', 'uvicorn', 'ppe.api.app:create_app', '--factory', '--reload')
+        Invoke-Uv @('run', '--no-sync', 'uvicorn', 'ppe.api.app:create_app',
+            '--factory', '--reload')
+    }
+    'viewer'       {
+        $env:PPE_MODEL__WEIGHTS = 'runs/train/baseline/weights/best.pt'
+        Write-Host 'debug viewer: http://127.0.0.1:8000' -ForegroundColor Cyan
+        Invoke-Uv @('run', '--no-sync', 'uvicorn', 'ppe.api.app:create_app',
+            '--factory', '--port', '8000')
     }
     'clean'        {
         foreach ($p in @('.pytest_cache', '.mypy_cache', '.ruff_cache', 'htmlcov',

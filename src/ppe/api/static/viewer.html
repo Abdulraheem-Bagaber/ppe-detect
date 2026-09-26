@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ppe-detect · debug viewer</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2c313b;
+    --ink: #e6e8ec; --dim: #9aa3b2;
+    --ok: #34c759; --bad: #ff3b30; --skip: #8e8e93; --accent: #5e9eff;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.5; }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .tag {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim); border: 1px solid var(--line); padding: 2px 8px; border-radius: 99px;
+  }
+  main { padding: 24px; max-width: 1180px; margin: 0 auto; }
+  .note {
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    padding: 12px 16px; border-radius: 6px; font-size: 13px; color: var(--dim);
+    margin-bottom: 20px;
+  }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 10px; padding: 40px 24px;
+    text-align: center; cursor: pointer; transition: .15s; background: var(--panel);
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: #20242c; }
+  .drop p { margin: 6px 0; }
+  .muted { color: var(--dim); font-size: 13px; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  button {
+    background: var(--accent); color: #0b0d10; border: 0; padding: 9px 18px;
+    border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  label.opt { font-size: 13px; color: var(--dim); }
+  select { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+           border-radius: 5px; padding: 5px 8px; }
+  #status { margin-top: 18px; font-size: 14px; color: var(--dim); min-height: 22px; }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -2px; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  section { margin-top: 26px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+  video, img.sheet { width: 100%; border-radius: 8px; border: 1px solid var(--line);
+                     background: #000; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .stat .n { font-size: 21px; font-weight: 650; }
+  .stat .k { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .06em; }
+  td.t { font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .pill.bad { background: rgba(255,59,48,.16); color: #ff6b61; }
+  .pill.skip { background: rgba(142,142,147,.16); color: #b0b5be; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); }
+  .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+            margin-right: 6px; vertical-align: -1px; }
+  .err { color: #ff6b61; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ppe-detect</h1>
+  <span class="tag">local debug viewer</span>
+  <span class="muted" id="health"></span>
+</header>
+
+<main>
+  <div class="note">
+    <strong>This is a development tool, not the product.</strong> The deliverables are the
+    JSON event stream (<code>POST /analyse/upload</code>) and the CLI. This page exists so you
+    can watch what the rule layer decided and disagree with it. Faces are blurred before any
+    frame is rendered — the same rule the API follows.
+  </div>
+
+  <div class="drop" id="drop">
+    <p><strong>Drop a video here</strong>, or click to choose one</p>
+    <p class="muted">mp4, mov, avi, mkv · first 5 minutes are processed</p>
+    <input type="file" id="file" accept="video/*" hidden>
+  </div>
+
+  <div class="row">
+    <button id="go" disabled>Analyse</button>
+    <label class="opt">every
+      <select id="stride">
+        <option value="1">1st</option>
+        <option value="2">2nd</option>
+        <option value="3" selected>3rd</option>
+        <option value="5">5th</option>
+      </select>
+      frame
+    </label>
+    <span class="muted" id="chosen"></span>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="results" hidden>
+    <section>
+      <h2>Summary</h2>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section>
+      <h2>Annotated video</h2>
+      <video id="vid" controls playsinline></video>
+      <p class="muted" id="vidnote"></p>
+      <div class="legend" style="margin-top:10px">
+        <span><i class="swatch" style="background:#34c759"></i>compliant</span>
+        <span><i class="swatch" style="background:#ff3b30"></i>violation</span>
+        <span><i class="swatch" style="background:#8e8e93"></i>seen but not judged</span>
+        <span><i class="swatch" style="background:#00dcff"></i>helmet</span>
+        <span><i class="swatch" style="background:#ffa500"></i>vest</span>
+      </div>
+    </section>
+
+    <section id="eventsec">
+      <h2>Violation events</h2>
+      <table id="events"></table>
+    </section>
+
+    <section id="skipsec">
+      <h2>Seen but not judged</h2>
+      <p class="muted">
+        These are people the system deliberately refused to rule on. That is a third outcome,
+        distinct from compliant, and it is what stops the system accusing someone whose head
+        is out of frame.
+      </p>
+      <table id="skips"></table>
+    </section>
+
+    <section id="sheetsec" hidden>
+      <h2>Every event, as stills</h2>
+      <p class="muted">Useful when the browser will not play the rendered codec.</p>
+      <img class="sheet" id="sheet" alt="frames where violations fired">
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let chosenFile = null;
+
+fetch("/health").then(r => r.json()).then(h => {
+  const blur = h.blur_faces ? "faces blurred" : "BLURRING OFF";
+  $("health").textContent = `${h.status} · ${h.backend} on ${h.device} · ${blur}`;
+  if (!h.blur_faces) $("health").classList.add("err");
+}).catch(() => { $("health").textContent = "api unreachable"; });
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files.length) pick(e.dataTransfer.files[0]);
+};
+$("file").onchange = (e) => { if (e.target.files.length) pick(e.target.files[0]); };
+
+function pick(f) {
+  chosenFile = f;
+  $("chosen").textContent = `${f.name} · ${(f.size / 1048576).toFixed(1)} MB`;
+  $("go").disabled = false;
+}
+
+$("go").onclick = async () => {
+  if (!chosenFile) return;
+  $("go").disabled = true;
+  $("results").hidden = true;
+  $("status").innerHTML = '<span class="spinner"></span>analysing — this runs the whole ' +
+    'pipeline frame by frame, so expect roughly real time';
+
+  const body = new FormData();
+  body.append("file", chosenFile);
+
+  try {
+    const res = await fetch(`/review/upload?stride=${$("stride").value}`, { method: "POST", body });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(detail.detail || res.statusText);
+    }
+    render(await res.json());
+    $("status").textContent = "";
+  } catch (err) {
+    $("status").innerHTML = `<span class="err">failed: ${err.message}</span>`;
+  } finally {
+    $("go").disabled = false;
+  }
+};
+
+function render(d) {
+  const fa = d.duration_s > 0 ? (d.events.length / (d.duration_s / 3600)).toFixed(0) : "n/a";
+  $("stats").innerHTML = [
+    ["violation events", d.events.length],
+    ["false alarms/hr", fa],
+    ["frames", d.frames_processed],
+    ["duration", d.duration_s.toFixed(1) + "s"],
+    ["people found", d.detections.person || 0],
+    ["helmets", d.detections.helmet || 0],
+    ["vests", d.detections.vest || 0],
+  ].map(([k, n]) => `<div class="stat"><div class="n">${n}</div><div class="k">${k}</div></div>`).join("");
+
+  $("vid").src = d.video_url;
+  $("vidnote").textContent = d.blur_faces
+    ? "Faces were blurred before this was written to disk."
+    : "WARNING: blurring is disabled in config.";
+
+  const ev = $("events");
+  if (d.events.length) {
+    ev.innerHTML = "<tr><th>time</th><th>track</th><th>missing</th><th>held for</th><th>confidence</th></tr>" +
+      d.events.map(e => `<tr>
+        <td class="t">${e.timestamp_s.toFixed(2)}s</td>
+        <td class="t">#${e.track_id}</td>
+        <td><span class="pill bad">${e.missing.join(" + ")}</span></td>
+        <td class="t">${e.streak_length} frames</td>
+        <td class="t">${e.mean_person_confidence.toFixed(2)}</td>
+      </tr>`).join("");
+  } else {
+    ev.innerHTML = "<tr><td class='muted'>none — every judged person was compliant</td></tr>";
+  }
+
+  const sk = Object.entries(d.skipped || {});
+  $("skips").innerHTML = sk.length
+    ? "<tr><th>reason</th><th>frames</th></tr>" + sk.map(([k, n]) =>
+        `<tr><td><span class="pill skip">${k.replace(/_/g, " ")}</span></td><td class="t">${n}</td></tr>`).join("")
+    : "<tr><td class='muted'>none — every person was judgeable</td></tr>";
+
+  if (d.contact_sheet_url) {
+    $("sheet").src = d.contact_sheet_url;
+    $("sheetsec").hidden = false;
+  } else {
+    $("sheetsec").hidden = true;
+  }
+
+  $("results").hidden = false;
+}
+</script>
+</body>
+</html>

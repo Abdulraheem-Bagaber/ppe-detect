@@ -49,6 +49,26 @@ class AnalyseResponse(BaseModel):
     events: list[ViolationEventModel]
 
 
+class ReviewResponse(BaseModel):
+    """Result of a debug-viewer run: events plus a rendered video to watch."""
+
+    source: str
+    frames_processed: int
+    duration_s: float
+    fps: float
+    blur_faces: bool
+    video_url: str | None = None
+    contact_sheet_url: str | None = None
+    events: list[ViolationEventModel]
+    skipped: dict[str, int] = Field(
+        default_factory=dict,
+        description="Counts of people seen but deliberately not judged, by reason.",
+    )
+    detections: dict[str, int] = Field(
+        default_factory=dict, description="Raw detection counts by class."
+    )
+
+
 class HealthResponse(BaseModel):
     """Liveness plus enough identity to know what is actually running.
 

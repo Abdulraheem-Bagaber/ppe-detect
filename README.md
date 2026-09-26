@@ -232,6 +232,32 @@ published result on temporal PPE compliance uses private footage. The Phase 5
 violation precision/recall numbers therefore require hand-annotated clips,
 which do not exist yet. Tracked as the longest-lead item in the project.
 
+## Looking at what it decided
+
+A local debug viewer, for inspecting output frame by frame:
+
+```bash
+make viewer
+```
+
+Then open <http://127.0.0.1:8000>, drop in a video, and watch the annotated
+result: green for compliant, red for violation, **grey for seen-but-not-judged**.
+That third colour is the point -- it is where the system refuses to rule on
+someone whose head is out of frame, and a two-colour viewer would hide it.
+
+**This is development tooling, not the product.** The deliverables remain the
+JSON event stream (`POST /analyse/upload`) and the CLI; the original brief
+ruled out a dashboard and this is not one. It exists because "trust the
+metrics" is a poor substitute for watching the thing work, and because the
+first clip run through it immediately exposed a rule-layer gap that no test
+had caught: a camera close-up of a worker's legs produces a tall person box
+touching no frame edge, so the helmet band lands on a thigh and the system
+accuses someone whose head was never in shot.
+
+Faces are blurred before any frame is rendered -- the same rule the API
+follows. A debug tool that leaked faces would be the worse leak, because
+nobody audits debug tools.
+
 ## Configuration
 
 Every threshold lives in `configs/default.yaml` — association bands,
