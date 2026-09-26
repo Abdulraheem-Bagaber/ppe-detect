@@ -218,14 +218,43 @@ def evaluability(
     if rule is None or not config.skip_when_cropped:
         return None
 
-    # If the region a worn item would occupy is largely out of shot, we have no
-    # evidence either way. Saying "no helmet" there would be a claim about
-    # pixels that do not exist.
+    width, height = frame_size
+    borders = person.box.touching_borders(width, height, config.edge_margin_px)
+
+    # A box that reaches the top edge is a partial body: the person continues
+    # above the frame by an unknown amount, so the detector's box starts at
+    # their chest, or their waist, or their knees. Every band derived from it
+    # is then shifted down by that unknown amount, and the "upper third" is
+    # not their head.
+    #
+    # This cannot be recovered from the box alone -- a worker standing with
+    # their head exactly at the frame edge looks identical to one cropped at
+    # the waist. Refusing to rule is the only honest answer, and it is the
+    # same principle as everywhere else here: absence of evidence is not
+    # evidence of absence.
+    #
+    # Found by watching a camera close-up of a worker's boots get reported as
+    # "no helmet, no vest". The band-visibility check below could never have
+    # caught it: bands are computed from the detected box, which is already
+    # clipped to the frame, so the band is inside the frame by construction.
+    if "top" in borders:
+        return _out_of_frame_reason(item_class)
+
+    # The bottom edge is harmless by comparison. Feet cut off by the frame
+    # leaves the head and torso where they belong, so the bands still land on
+    # the right parts of the body.
+
+    # Retained for detectors that emit boxes extending beyond the frame rather
+    # than clipping to it. There the band really can be partly outside.
     band = person.box.band(rule.band_top, rule.band_bottom)
     if visible_fraction(band, frame_size) < config.min_band_visibility:
-        return (
-            SkipReason.HEAD_OUT_OF_FRAME
-            if item_class is PPEClass.HELMET
-            else SkipReason.TORSO_OUT_OF_FRAME
-        )
+        return _out_of_frame_reason(item_class)
     return None
+
+
+def _out_of_frame_reason(item_class: PPEClass) -> SkipReason:
+    return (
+        SkipReason.HEAD_OUT_OF_FRAME
+        if item_class is PPEClass.HELMET
+        else SkipReason.TORSO_OUT_OF_FRAME
+    )

@@ -23,7 +23,11 @@ param(
     [string[]]$Rest
 )
 
-$ErrorActionPreference = 'Stop'
+# Deliberately NOT 'Stop'. In PowerShell 5.1 that turns a native command's
+# stderr into a terminating error, and uv writes its progress to stderr --
+# so a perfectly successful `uv sync` would blow up. Failure is detected
+# from $LASTEXITCODE in Invoke-Uv, which is the reliable signal.
+$ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 
 function Resolve-Uv {
@@ -55,6 +59,11 @@ function Resolve-Uv {
 
 $script:Uv = Resolve-Uv
 
+# Which torch build this machine holds. Written by the cpu/gpu targets and
+# remembered in a gitignored file, so every command selects the same extra
+# and nothing can silently revert the other build.
+$script:Torch = if (Test-Path .torch) { (Get-Content .torch -Raw).Trim() } else { 'cpu' }
+
 function Invoke-Uv {
     param([string[]]$Arguments)
     $all = @($script:Uv.PreArgs) + $Arguments
@@ -66,7 +75,8 @@ function Invoke-Uv {
 $targets = [ordered]@{
     'install'      = 'Create the venv and install everything, CPU torch by default'
     'hooks'        = 'Install the pre-commit git hooks'
-    'gpu'          = 'Swap in CUDA torch for local training'
+    'gpu'          = 'Switch to the CUDA torch build, and remember it'
+    'cpu'          = 'Switch back to the CPU build (what Docker uses)'
     'test'         = 'Run the full test suite with coverage'
     'test-fast'    = 'Skip anything marked slow, gpu or model'
     'lint'         = 'Lint and check formatting'
@@ -90,44 +100,49 @@ switch ($Target) {
             Write-Host ("  {0,-14} {1}" -f $name, $targets[$name])
         }
     }
-    'install'      { Invoke-Uv @('sync', '--dev') }
-    'hooks'        { Invoke-Uv @('run', 'pre-commit', 'install') }
+    'install'      { Invoke-Uv @('sync', '--extra', $script:Torch, '--dev') }
+    'hooks'        { Invoke-Uv @('run', '--extra', $script:Torch, 'pre-commit', 'install') }
     'gpu'          {
-        # --python is required: without it uv resolves the ambient
-        # interpreter, which is the system Python and is not writable.
-        Invoke-Uv @('pip', 'install', '--python', '.venv', '--reinstall',
-            '--index-url', 'https://download.pytorch.org/whl/cu126',
-            'torch', 'torchvision')
+        Set-Content -Path .torch -Value 'gpu' -NoNewline -Encoding utf8
+        $script:Torch = 'gpu'
+        Invoke-Uv @('sync', '--extra', 'gpu', '--dev')
+        Invoke-Uv @('run', '--extra', 'gpu', 'python', '-c',
+            "import torch; print('torch', torch.__version__, '| cuda', torch.cuda.is_available())")
     }
-    'test'         { Invoke-Uv (@('run', 'pytest') + $Rest) }
-    'test-fast'    { Invoke-Uv @('run', 'pytest', '-m', 'not slow and not gpu and not model') }
+    'cpu'          {
+        Set-Content -Path .torch -Value 'cpu' -NoNewline -Encoding utf8
+        $script:Torch = 'cpu'
+        Invoke-Uv @('sync', '--extra', 'cpu', '--dev')
+    }
+    'test'         { Invoke-Uv (@('run', '--extra', $script:Torch, 'pytest') + $Rest) }
+    'test-fast'    { Invoke-Uv @('run', '--extra', $script:Torch, 'pytest', '-m', 'not slow and not gpu and not model') }
     'lint'         {
-        Invoke-Uv @('run', 'ruff', 'check', '.')
-        Invoke-Uv @('run', 'ruff', 'format', '--check', '.')
+        Invoke-Uv @('run', '--extra', $script:Torch, 'ruff', 'check', '.')
+        Invoke-Uv @('run', '--extra', $script:Torch, 'ruff', 'format', '--check', '.')
     }
     'format'       {
-        Invoke-Uv @('run', 'ruff', 'format', '.')
-        Invoke-Uv @('run', 'ruff', 'check', '--fix', '.')
+        Invoke-Uv @('run', '--extra', $script:Torch, 'ruff', 'format', '.')
+        Invoke-Uv @('run', '--extra', $script:Torch, 'ruff', 'check', '--fix', '.')
     }
-    'typecheck'    { Invoke-Uv @('run', 'mypy') }
+    'typecheck'    { Invoke-Uv @('run', '--extra', $script:Torch, 'mypy') }
     'check'        {
         & $PSCommandPath 'lint'
         & $PSCommandPath 'typecheck'
         & $PSCommandPath 'test'
     }
-    'prepare-data' { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/prepare_data.py') + $Rest) }
-    'train'        { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/train.py') + $Rest) }
-    'eval'         { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/evaluate.py') + $Rest) }
-    'export'       { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/export_onnx.py') + $Rest) }
-    'benchmark'    { Invoke-Uv (@('run', '--no-sync', 'python', 'scripts/benchmark.py') + $Rest) }
+    'prepare-data' { Invoke-Uv (@('run', '--extra', $script:Torch, 'python', 'scripts/prepare_data.py') + $Rest) }
+    'train'        { Invoke-Uv (@('run', '--extra', $script:Torch, 'python', 'scripts/train.py') + $Rest) }
+    'eval'         { Invoke-Uv (@('run', '--extra', $script:Torch, 'python', 'scripts/evaluate.py') + $Rest) }
+    'export'       { Invoke-Uv (@('run', '--extra', $script:Torch, 'python', 'scripts/export_onnx.py') + $Rest) }
+    'benchmark'    { Invoke-Uv (@('run', '--extra', $script:Torch, 'python', 'scripts/benchmark.py') + $Rest) }
     'serve'        {
-        Invoke-Uv @('run', '--no-sync', 'uvicorn', 'ppe.api.app:create_app',
+        Invoke-Uv @('run', '--extra', $script:Torch, 'uvicorn', 'ppe.api.app:create_app',
             '--factory', '--reload')
     }
     'viewer'       {
         $env:PPE_MODEL__WEIGHTS = 'runs/train/baseline/weights/best.pt'
         Write-Host 'debug viewer: http://127.0.0.1:8000' -ForegroundColor Cyan
-        Invoke-Uv @('run', '--no-sync', 'uvicorn', 'ppe.api.app:create_app',
+        Invoke-Uv @('run', '--extra', $script:Torch, 'uvicorn', 'ppe.api.app:create_app',
             '--factory', '--port', '8000')
     }
     'clean'        {

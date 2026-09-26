@@ -165,12 +165,35 @@ class TestEvaluability:
         cropped = person(400.0, -120.0, 500.0, 300.0)
         assert evaluability(cropped, PPEClass.HELMET, config, FRAME) is SkipReason.HEAD_OUT_OF_FRAME
 
-    def test_the_same_cropped_person_is_still_judged_for_a_vest(
+    def test_a_box_clipped_at_the_top_edge_is_not_judged_for_a_helmet(
         self, config: AssociationConfig
     ) -> None:
-        """A missing head says nothing about a visible torso."""
-        cropped = person(400.0, -60.0, 500.0, 300.0)
-        assert evaluability(cropped, PPEClass.VEST, config, FRAME) is None
+        """The case that reached production video and was reported as a violation.
+
+        A detector clips its boxes to the frame, so a worker standing half
+        out of shot yields a box starting at y=0. That box might be their
+        whole body, or only their legs -- nothing in the geometry says which,
+        and the "upper third" of a legs-only box is a thigh.
+        """
+        clipped = person(126.0, 0.0, 273.0, 353.0)
+        assert evaluability(clipped, PPEClass.HELMET, config, FRAME) is SkipReason.HEAD_OUT_OF_FRAME
+
+    def test_a_box_clipped_at_the_top_edge_is_not_judged_for_a_vest_either(
+        self, config: AssociationConfig
+    ) -> None:
+        """Both bands shift by the same unknown amount, so neither is usable."""
+        clipped = person(126.0, 0.0, 273.0, 353.0)
+        assert evaluability(clipped, PPEClass.VEST, config, FRAME) is SkipReason.TORSO_OUT_OF_FRAME
+
+    def test_feet_cut_off_at_the_bottom_is_still_judged(self, config: AssociationConfig) -> None:
+        """The bottom edge is harmless: the head and torso are where they belong.
+
+        Guarding against it too would refuse to judge anyone standing near the
+        camera, which is most of the useful frame.
+        """
+        feet_cut = person(400.0, 200.0, 500.0, 720.0)
+        assert evaluability(feet_cut, PPEClass.HELMET, config, FRAME) is None
+        assert evaluability(feet_cut, PPEClass.VEST, config, FRAME) is None
 
     def test_a_person_too_small_to_judge_is_skipped(self, config: AssociationConfig) -> None:
         tiny = person(400.0, 300.0, 415.0, 340.0)

@@ -14,9 +14,9 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "typer>=0.15",
-    # Vision stack
-    "torch>=2.5,<3",
-    "torchvision>=0.20",
+    # Vision stack. torch/torchvision are NOT here: they live in the cpu and
+    # gpu extras below, because which build you want is a real choice and
+    # the lockfile should record both rather than one plus a manual override.
     "ultralytics>=8.3",          # AGPL-3.0 — quarantined behind the Detector protocol
     # ByteTrack is deprecated in supervision and removed in 0.31; pinned below
     # that until we swap trackers. The Tracker protocol is what makes that a
@@ -55,17 +55,47 @@ build-backend = "hatchling.build"
 packages = ["src/ppe"]
 artifacts = ["src/ppe/api/static/*.html"]
 
-# --- uv -----------------------------------------------------------------
-# CPU wheels are the default so the lockfile matches the CPU-only Docker
-# image and the "assume no GPU" rule. `make gpu` swaps in the CUDA build.
+# --- torch: two builds, both locked --------------------------------------
+# An earlier version kept CPU torch in `dependencies` and treated the CUDA
+# build as an out-of-band `uv pip install`. That was wrong three separate
+# times: anything that synced from the lockfile silently reverted the GPU
+# install, training then ran ~30x slower with no error, and one drift between
+# pyproject and uv.lock wiped the environment outright.
+#
+# Both builds are now extras, declared as mutually exclusive, so uv locks each
+# one and switching is a normal `uv sync` that survives every later command.
+#
+#   make install   -> CPU build  (matches the CPU-only Docker image)
+#   make gpu       -> CUDA build (for training)
+#
+# The choice is remembered in a gitignored `.torch` file, so it only has to be
+# made once per machine.
+[project.optional-dependencies]
+cpu = ["torch>=2.5,<3", "torchvision>=0.20"]
+gpu = ["torch>=2.5,<3", "torchvision>=0.20"]
+
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "gpu" },
+]
 
 # --- ruff ---------------------------------------------------------------
 [tool.ruff]

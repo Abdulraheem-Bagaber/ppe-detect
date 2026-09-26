@@ -1,64 +1,76 @@
 .DEFAULT_GOAL := help
 UV ?= uv
 
-.PHONY: help install hooks test test-fast lint format typecheck check gpu \
-        prepare-data train eval export benchmark serve clean
+# Which torch build this machine holds. Written by `make cpu` / `make gpu` and
+# remembered in a gitignored file, so every target below selects the same
+# extra and no command can silently revert the other one.
+TORCH := $(shell cat .torch 2>/dev/null || echo cpu)
+UVRUN := $(UV) run --extra $(TORCH)
+
+.PHONY: help install hooks cpu gpu test test-fast lint format typecheck check \
+        prepare-data train eval export benchmark serve viewer clean
 
 help:  ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@echo "\n  torch build in use: $(TORCH)"
 
-install:  ## Create the venv and install everything, CPU torch by default
-	$(UV) sync --dev
+install:  ## Create the venv and install everything
+	$(UV) sync --extra $(TORCH) --dev
 
 hooks:  ## Install the pre-commit git hooks
-	$(UV) run pre-commit install
+	$(UVRUN) pre-commit install
 
-gpu:  ## Swap in CUDA torch for local training (see README)
-	# NOTE: plain `uv run` re-syncs from uv.lock and silently reverts this,
-	# which is why the ML targets below pass --no-sync.
-	$(UV) pip install --python .venv --reinstall \
-		--index-url https://download.pytorch.org/whl/cu126 torch torchvision
+gpu:  ## Switch to the CUDA torch build, and remember the choice
+	@echo gpu > .torch
+	$(UV) sync --extra gpu --dev
+	@$(UV) run --extra gpu python -c \
+		"import torch; print('torch', torch.__version__, '| cuda', torch.cuda.is_available())"
+
+cpu:  ## Switch back to the CPU build, which is what the Docker image uses
+	@echo cpu > .torch
+	$(UV) sync --extra cpu --dev
 
 test:  ## Run the full test suite with coverage
-	$(UV) run pytest
+	$(UVRUN) pytest
 
 test-fast:  ## Skip anything marked slow, gpu or model
-	$(UV) run pytest -m "not slow and not gpu and not model"
+	$(UVRUN) pytest -m "not slow and not gpu and not model"
 
 lint:  ## Lint and check formatting
-	$(UV) run ruff check .
-	$(UV) run ruff format --check .
+	$(UVRUN) ruff check .
+	$(UVRUN) ruff format --check .
 
 format:  ## Apply formatting and safe lint fixes
-	$(UV) run ruff format .
-	$(UV) run ruff check --fix .
+	$(UVRUN) ruff format .
+	$(UVRUN) ruff check --fix .
 
 typecheck:  ## Static type check
-	$(UV) run mypy
+	$(UVRUN) mypy
 
 check: lint typecheck test  ## Everything CI runs
 
 prepare-data:  ## Phase 1: convert a source dataset to YOLO format
-	$(UV) run --no-sync python scripts/prepare_data.py
+	$(UVRUN) python scripts/prepare_data.py
 
 train:  ## Phase 2: fine-tune the baseline detector
-	$(UV) run --no-sync python scripts/train.py
+	$(UVRUN) python scripts/train.py
 
 eval:  ## Phase 5: violation-level precision, recall and error breakdown
-	$(UV) run --no-sync python scripts/evaluate.py
+	$(UVRUN) python scripts/evaluate.py
 
 export:  ## Phase 6: export to ONNX and verify parity
-	$(UV) run --no-sync python scripts/export_onnx.py
+	$(UVRUN) python scripts/export_onnx.py
 
 benchmark:  ## Phase 7: latency and throughput across backends
-	$(UV) run --no-sync python scripts/benchmark.py
+	$(UVRUN) python scripts/benchmark.py
 
 serve:  ## Run the API locally
-	$(UV) run --no-sync uvicorn ppe.api.app:create_app --factory --reload
+	$(UVRUN) uvicorn ppe.api.app:create_app --factory --reload
 
-viewer:  ## Run the API and open the local debug viewer at http://127.0.0.1:8000
-	PPE_MODEL__WEIGHTS=runs/train/baseline/weights/best.pt \n	$(UV) run --no-sync uvicorn ppe.api.app:create_app --factory --port 8000
+viewer:  ## Run the local debug viewer at http://127.0.0.1:8000
+	PPE_MODEL__WEIGHTS=runs/train/baseline/weights/best.pt \
+	$(UVRUN) uvicorn ppe.api.app:create_app --factory --port 8000
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml

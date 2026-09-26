@@ -134,18 +134,37 @@ The full suite runs in about 5 seconds. One test is marked `slow` because
 OpenCV's FFmpeg backend waits 30 seconds before giving up on an unreachable
 stream; `test-fast` skips it.
 
-### CPU by default, GPU on request
+### CPU or GPU, both locked
 
-The default install pulls **CPU-only torch**, matching the CPU-only Docker
-image and keeping the lockfile portable. Training on CPU works; it is just
-slow. To use a local CUDA card:
+`torch` is not a plain dependency. The CPU and CUDA builds are declared as
+**mutually exclusive extras**, so `uv.lock` holds both and switching is a
+normal sync:
 
 ```bash
-.\make.ps1 gpu
+make gpu
 ```
 
-Device selection is automatic at runtime (`model.device: auto`), so no code
-changes either way.
+```bash
+make cpu
+```
+
+The choice is written to a gitignored `.torch` file and every target reads it,
+so the environment cannot drift back on its own. Device selection at runtime is
+separate and automatic (`model.device: auto`), so no code changes either way.
+
+CPU is the default because it matches the CPU-only Docker image, and the served
+path does not need a GPU -- the benchmark below shows 12 FPS on CPU, which
+comfortably feeds a 5 FPS camera. The GPU is for training.
+
+**Why this is structured so carefully.** An earlier version kept CPU torch in
+`dependencies` and installed the CUDA build over the top with `uv pip install`.
+That failed three separate ways: any `uv run` re-synced from the lockfile and
+silently reverted it, so training ran ~30x slower with no error anywhere;
+`uv pip install` invoked through the wrong interpreter targeted the unwritable
+system Python and still exited 0; and one drift between `pyproject.toml` and
+`uv.lock` wiped the environment outright. A build that lives outside the
+lockfile is not a state, it is a race. `scripts/train.py` still warns if it
+finds an NVIDIA card next to a CPU-only torch, as a last line of defence.
 
 ## Data
 
