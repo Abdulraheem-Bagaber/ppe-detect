@@ -277,6 +277,21 @@ Faces are blurred before any frame is rendered -- the same rule the API
 follows. A debug tool that leaked faces would be the worse leak, because
 nobody audits debug tools.
 
+### Detection runs on raw pixels; blurring is an output step
+
+This ordering is load-bearing and easy to get backwards, because "blur it,
+then process it" sounds like the more careful choice. It is not. Measured on
+real footage, running the detector on blurred frames costs **53% of all
+detections** (533 -> 249 across 144 sampled frames): faces sit on heads, heads
+sit on people, and destroying that region destroys the person detections
+everything else depends on.
+
+So the detector always sees the original frame, and blurring happens on the
+way out. Privacy then costs nothing in accuracy.
+`tests/privacy/test_detection_sees_raw_pixels.py` asserts it directly with a
+detector that records the pixels it was handed, because a future refactor that
+tidied this up would halve recall and no other test would notice.
+
 ## Configuration
 
 Every threshold lives in `configs/default.yaml` — association bands,
@@ -348,6 +363,23 @@ so effort goes where it pays.
 | Association failure | TBD | TBD |
 | Tracking ID switch | TBD | TBD |
 | Annotation disagreement | TBD | TBD |
+
+Not yet measurable without annotated clips. An unscored spot check over one
+minute of site footage is consistent with what the detection metrics predict:
+of four vest false alarms, three had **no vest detected anywhere in the frame**
+despite one being plainly visible, and the fourth was a vest correctly *not*
+attributed because it belonged to a different worker. Vest recall of 0.744
+shows up as false accusations, exactly as expected.
+
+### Known limitation: the band model assumes an upright person
+
+Helmet-above-head and vest-on-torso are expressed as fractions of the person
+box's *height*, which presumes a roughly vertical body. Two bent-over workers
+in that spot check had person boxes with aspect ratios of 1.20 and 0.81 --
+wider than tall. For those postures the bands do not correspond to body parts.
+It did not change the outcome there, because the vests were never detected at
+all, but the assumption is real and undocumented assumptions are the ones that
+bite.
 
 ### Inference performance
 
