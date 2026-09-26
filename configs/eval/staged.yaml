@@ -1,0 +1,83 @@
+# Staged evaluation clip -- a scripted shoot, not found footage.
+#
+# WHY STAGED. There is no public event-level PPE video benchmark, and found
+# footage fails twice over: news and stock clips are cut every few seconds,
+# which destroys tracking before the debouncer can confirm anything, and their
+# licences do not permit redistribution in a public repository. A scripted clip
+# is owned outright, carries exact ground truth because it was written before
+# it was filmed, and can deliberately target the failure modes the rule layer
+# claims to handle.
+#
+# HOW TO SHOOT IT. Phone on a shelf or tripod, fixed, wide enough to see whole
+# bodies. Do not move the camera or cut. One continuous take of ~3 minutes.
+# Two people, one hard hat, one hi-vis vest. Say the scene number out loud as
+# you start each one so the timestamps are easy to recover afterwards.
+#
+# THEN: note the start and end second of each violation below, delete the
+# scenes you did not film, and run
+#     uv run --no-sync python scripts/evaluate.py --ground-truth configs/eval/staged.yaml
+
+# EVERY NUMBER BELOW MARKED '<<< REPLACE' IS A PLACEHOLDER. They are plausible
+# so the file validates and the harness can be dry-run, but they describe a
+# clip that does not exist yet. Replace them after filming.
+
+name: staged-v1
+
+clips:
+  - clip: data/clips/staged_01.mp4
+    duration_s: 180.0 # <<< REPLACE: real clip length. Divides false alarms/hour.
+    fps: 30.0
+    annotator: ""
+    note: >-
+      Scripted single take. Scene numbers are called out on the audio track.
+
+    violations:
+      # Scene 1 -- both PPE items worn, walking across frame.
+      #   Expect: NO events. Anything fired here is a false alarm.
+      #   Nothing to list.
+
+      # Scene 2 -- helmet removed and held down by the side, still walking.
+      #   Expect: one helmet violation, ~0.5s after removal.
+      - person_label: person A, helmet removed
+        missing: [helmet]
+        start_s: 26.0 # <<< REPLACE
+        end_s: 48.0 # <<< REPLACE
+        note: baseline violation; the simplest case that must work
+
+      # Scene 3 -- helmet carried at WAIST HEIGHT, inside the body outline.
+      #   Expect: still a helmet violation. A naive containment check passes
+      #   this as compliant because the helmet is inside the person box.
+      #   Covered by test_a_helmet_carried_at_waist_height_is_not_worn.
+      - person_label: person A, carrying helmet at waist
+        missing: [helmet]
+        start_s: 52.0 # <<< REPLACE
+        end_s: 74.0 # <<< REPLACE
+        note: the carried-helmet case; band rule must reject it
+
+      # Scene 4 -- TWO PEOPLE SHOULDER TO SHOULDER, one helmet between them.
+      #   Expect: exactly ONE violation, against the bare-headed person.
+      #   A per-person argmax gives the helmet to both and reports none.
+      #   Covered by test_two_overlapping_workers_cannot_share_one_helmet.
+      - person_label: person B, bare-headed beside person A
+        missing: [helmet]
+        start_s: 80.0 # <<< REPLACE
+        end_s: 104.0 # <<< REPLACE
+        box_hint: null # set [x1,y1,x2,y2] if the two are hard to tell apart
+        note: the one that matters; one-to-one assignment must hold on real pixels
+
+      # Scene 5 -- walk close to the camera so the head leaves the top of frame.
+      #   Expect: NO events. The head is not visible, so no claim can be made.
+      #   Covered by test_a_person_cropped_at_the_top_is_not_judged_for_a_helmet.
+      #   Nothing to list -- any event here is a false alarm, which is the point.
+
+      # Scene 6 -- vest removed, helmet kept on.
+      #   Expect: one vest violation. Vest recall measured at 0.744, so this
+      #   is the scene most likely to expose a missed detection.
+      - person_label: person A, no vest
+        missing: [vest]
+        start_s: 132.0 # <<< REPLACE
+        end_s: 158.0 # <<< REPLACE
+        note: vest is the weakest class; expect this one to be flaky
+
+      # Scene 7 -- helmet put back on, both items worn, walk off.
+      #   Expect: the violation stops. Nothing to list.
