@@ -93,10 +93,11 @@ and no torch at all** -- it runs the exported ONNX graph through the same
 protocol. The AGPL obligation applies to training, which happens on a
 developer machine, not to the artefact that gets served.
 
-The same boundary cut the image from **3.41 GB to 475 MB** (86%), because
-torch, polars, sympy and the rest of the training stack are simply not
-installed. Verified: `import torch` fails inside the image, and the container
-returns byte-identical events on the same clip.
+The same boundary cut the image from **3.41 GB to 1.86 GB** (45%, both
+measured uncompressed via `docker images`), because torch, polars, sympy and
+the rest of the training stack are simply not installed. Verified: `import
+torch` fails inside the image, and the container returns byte-identical
+events on the same clip.
 
 The protocol:
 
@@ -156,10 +157,18 @@ docker run -p 8000:8000 -v "$PWD/models:/app/models:ro"   -e PPE_MODEL__BACKEND=
 
 | | |
 | --- | --- |
-| Image size | **475 MB** (was 3.41 GB before the training stack was excluded) |
+| Size on disk (`docker images`) | **1.86 GB**, down from 3.41 GB |
+| Transfer size (`docker save`) | **0.47 GB** |
 | Backend | ONNX Runtime, CPU |
 | Contains torch / ultralytics | **No** |
 | Verified | `/health` returns ok; a 20s clip returns events identical to the local GPU run |
+
+Two size numbers because Docker reports two different things and they are
+often confused: `docker images` shows layers unpacked on disk, while what a
+registry actually transfers is the compressed set. The 45% reduction above
+compares like with like (both uncompressed); no compressed measurement of the
+pre-change image was taken before it was deleted, so no compressed-basis
+comparison is claimed.
 
 Weights are mounted, never baked in. The service starts `degraded` rather than
 crashing if they are missing, so `/health` can say what is wrong.
