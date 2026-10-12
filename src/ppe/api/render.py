@@ -140,31 +140,47 @@ def write_video(
     fps: float,
     config: AppConfig,
 ) -> int:
-    """Annotate and encode. Returns the number of frames written.
+    """Annotate and encode to browser-playable H.264. Returns frames written.
 
-    mp4v rather than H.264: OpenCV's H.264 support depends on how the wheel was
-    built, and a debug tool should not fail because of a codec. Browsers play
-    mp4v inconsistently, so the viewer falls back to frame-by-frame if needed.
+    PyAV with libx264, not OpenCV's VideoWriter. OpenCV's pip wheels ship no
+    H.264 encoder for licensing reasons, so it silently falls back to mp4v
+    (MPEG-4 Part 2) -- which writes a perfectly valid .mp4 that Chrome, Edge
+    and Firefox all refuse to decode. The file looks fine, the player shows
+    nothing, and nothing anywhere reports an error.
+
+    `faststart` moves the index to the front of the file so playback can begin
+    before the whole thing has downloaded.
     """
-    writer: cv2.VideoWriter | None = None
+    import av
+
     written = 0
+    container = None
+    stream = None
+
     try:
         for frame, result in frames:
             annotated = annotate(frame, result, config)
-            if writer is None:
+            if container is None:
                 height, width = annotated.shape[:2]
-                # cv2.VideoWriter_fourcc is generated at runtime, so mypy
-                # cannot see it on the module.
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
-                writer = cv2.VideoWriter(str(destination), fourcc, fps, (width, height))
-                if not writer.isOpened():
-                    msg = f"could not open a video writer for {destination}"
-                    raise RuntimeError(msg)
-            writer.write(annotated)
+                container = av.open(str(destination), mode="w", options={"movflags": "+faststart"})
+                stream = container.add_stream("libx264", rate=round(fps))
+                # yuv420p is what every browser decodes, and it requires both
+                # dimensions to be even.
+                stream.width = width - (width % 2)
+                stream.height = height - (height % 2)
+                stream.pix_fmt = "yuv420p"
+
+            assert stream is not None
+            cropped = annotated[: stream.height, : stream.width]
+            video_frame = av.VideoFrame.from_ndarray(cropped[:, :, ::-1], format="rgb24")
+            for packet in stream.encode(video_frame):
+                container.mux(packet)
             written += 1
     finally:
-        if writer is not None:
-            writer.release()
+        if container is not None and stream is not None:
+            for packet in stream.encode():  # flush the encoder's buffer
+                container.mux(packet)
+            container.close()
     return written
 
 

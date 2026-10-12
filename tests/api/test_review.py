@@ -328,3 +328,72 @@ class TestRouteOrdering:
 
     def test_an_unknown_asset_name_is_still_refused(self, api: TestClient) -> None:
         assert api.get(f"/review/{'a' * 32}/secrets.txt").status_code == 404
+
+
+class TestVideoIsBrowserPlayable:
+    """The annotated copy must be H.264, or the player silently shows nothing.
+
+    OpenCV's pip wheels carry no H.264 encoder, so VideoWriter quietly falls
+    back to mp4v. That produces a valid .mp4 file which every major browser
+    refuses to decode: the file exists, the request returns 200, the <video>
+    element renders a black rectangle, and nothing reports an error anywhere.
+    Asserting the codec is the only way this stays fixed.
+    """
+
+    def _encode(self, tmp_path: Path, frames: int = 6) -> Path:
+        from ppe.api.render import write_video
+
+        pairs = [
+            (
+                np.zeros((120, 160, 3), dtype=np.uint8),
+                FrameResult(
+                    frame_index=i,
+                    timestamp_s=i / 10.0,
+                    detections=[PERSON],
+                    tracks=[],
+                    assessments=[PersonAssessment(PERSON)],
+                ),
+            )
+            for i in range(frames)
+        ]
+        out = tmp_path / "annotated.mp4"
+        assert write_video(iter(pairs), out, 10.0, AppConfig()) == frames
+        return out
+
+    def test_the_container_declares_h264(self, tmp_path: Path) -> None:
+        head = self._encode(tmp_path).read_bytes()[:8192]
+        assert b"avc1" in head, "not H.264; browsers will not play this"
+        assert b"mp4v" not in head, "fell back to mp4v, which browsers cannot decode"
+
+    def test_it_is_actually_decodable(self, tmp_path: Path) -> None:
+        """A declared codec is not a working file."""
+        import av
+
+        with av.open(str(self._encode(tmp_path))) as container:
+            stream = container.streams.video[0]
+            assert stream.codec_context.name == "h264"
+            assert sum(1 for _ in container.decode(video=0)) > 0
+
+    def test_the_index_is_at_the_front_for_streaming(self, tmp_path: Path) -> None:
+        """+faststart, so playback can begin before the file finishes loading."""
+        data = self._encode(tmp_path).read_bytes()
+        assert data.index(b"moov") < data.index(b"mdat")
+
+    def test_odd_dimensions_do_not_break_encoding(self, tmp_path: Path) -> None:
+        """yuv420p needs even width and height; real frames are not always."""
+        from ppe.api.render import write_video
+
+        odd = np.zeros((121, 161, 3), dtype=np.uint8)
+        pairs = [
+            (
+                odd,
+                FrameResult(
+                    frame_index=0,
+                    timestamp_s=0.0,
+                    detections=[],
+                    tracks=[],
+                    assessments=[],
+                ),
+            )
+        ]
+        assert write_video(iter(pairs), tmp_path / "odd.mp4", 10.0, AppConfig()) == 1
