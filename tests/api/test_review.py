@@ -242,3 +242,89 @@ class TestReviewAssetSecurity:
 
     def test_a_well_formed_but_absent_id_is_not_found(self, api: TestClient) -> None:
         assert api.get(f"/review/{'b' * 32}/annotated.mp4").status_code == 404
+
+
+class TestLiveStream:
+    """The streaming view: frames arrive while the pipeline is still running."""
+
+    def _prepare(self, api: TestClient, tmp_path: Path) -> str:
+        video = tiny_video(tmp_path / "clip.mp4", frames=8)
+        response = api.post(
+            "/review/prepare", files={"file": ("clip.mp4", video.read_bytes(), "video/mp4")}
+        )
+        assert response.status_code == 200
+        return response.json()["review_id"]
+
+    def test_prepare_returns_an_id_without_processing(
+        self, api: TestClient, tmp_path: Path
+    ) -> None:
+        """An <img> can only GET, so the upload has to happen separately."""
+        review_id = self._prepare(api, tmp_path)
+        assert len(review_id) == 32
+
+    def test_the_summary_is_not_available_until_the_run_finishes(
+        self, api: TestClient, tmp_path: Path
+    ) -> None:
+        review_id = self._prepare(api, tmp_path)
+        assert api.get(f"/review/{review_id}/summary").status_code == 409
+
+    def test_the_stream_emits_multipart_jpeg(self, api: TestClient, tmp_path: Path) -> None:
+        review_id = self._prepare(api, tmp_path)
+        response = api.get(f"/review/{review_id}/live?stride=1")
+        assert response.status_code == 200
+        assert "multipart/x-mixed-replace" in response.headers["content-type"]
+        assert response.content.count(b"Content-Type: image/jpeg") > 0
+
+    def test_the_summary_lands_once_the_stream_completes(
+        self, api: TestClient, tmp_path: Path
+    ) -> None:
+        review_id = self._prepare(api, tmp_path)
+        assert api.get(f"/review/{review_id}/live?stride=1").content  # drain it
+        summary = api.get(f"/review/{review_id}/summary")
+        assert summary.status_code == 200
+        assert summary.json()["frames_processed"] > 0
+
+    def test_a_scrubbable_copy_is_written_alongside(self, api: TestClient, tmp_path: Path) -> None:
+        """MJPEG cannot seek, so the mp4 still gets written for afterwards."""
+        review_id = self._prepare(api, tmp_path)
+        assert api.get(f"/review/{review_id}/live?stride=1").content
+        assert api.get(f"/review/{review_id}/annotated.mp4").status_code == 200
+
+    def test_stride_is_bounded_on_the_stream_too(self, api: TestClient, tmp_path: Path) -> None:
+        review_id = self._prepare(api, tmp_path)
+        assert api.get(f"/review/{review_id}/live?stride=99").status_code == 422
+
+    def test_a_bad_id_does_not_start_a_run(self, api: TestClient) -> None:
+        assert api.get("/review/not-a-uuid/live").status_code == 404
+
+
+class TestRouteOrdering:
+    """A catch-all `{name}` route silently shadowed /live and /summary.
+
+    FastAPI matches in registration order and a path parameter matches
+    anything, so `/review/{id}/{name}` registered first swallowed every later
+    `/review/{id}/...` route. Both endpoints were correctly defined and both
+    returned 404. These assert the specific routes win.
+    """
+
+    def test_live_is_not_swallowed_by_the_asset_route(
+        self, api: TestClient, tmp_path: Path
+    ) -> None:
+        video = tiny_video(tmp_path / "c.mp4", frames=4)
+        review_id = api.post(
+            "/review/prepare", files={"file": ("c.mp4", video.read_bytes(), "video/mp4")}
+        ).json()["review_id"]
+        assert api.get(f"/review/{review_id}/live?stride=1").status_code == 200
+
+    def test_summary_is_not_swallowed_by_the_asset_route(
+        self, api: TestClient, tmp_path: Path
+    ) -> None:
+        video = tiny_video(tmp_path / "c.mp4", frames=4)
+        review_id = api.post(
+            "/review/prepare", files={"file": ("c.mp4", video.read_bytes(), "video/mp4")}
+        ).json()["review_id"]
+        # 409 rather than 404: the route resolved, the run simply has not run.
+        assert api.get(f"/review/{review_id}/summary").status_code == 409
+
+    def test_an_unknown_asset_name_is_still_refused(self, api: TestClient) -> None:
+        assert api.get(f"/review/{'a' * 32}/secrets.txt").status_code == 404

@@ -11,13 +11,14 @@ import re
 import tempfile
 import uuid
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
-from ppe.api.render import contact_sheet, write_video
+from ppe.api.render import annotate, contact_sheet, write_video
 from ppe.api.schemas import (
     AnalyseRequest,
     AnalyseResponse,
@@ -274,18 +275,33 @@ async def review_upload(
         temp_path.unlink(missing_ok=True)
 
 
-@router.get("/review/{review_id}/{name}")
-def review_asset(review_id: str, name: str) -> FileResponse:
-    """Serve a rendered artefact. Ids are uuid4 hex, names are fixed."""
-    if not re.fullmatch(r"[0-9a-f]{32}", review_id) or name not in {
-        "annotated.mp4",
-        "events.png",
-    }:
+def _review_asset(review_id: str, name: str) -> FileResponse:
+    """Serve one rendered artefact, by exact name.
+
+    Routed as two explicit paths rather than one `{name}` catch-all. The
+    catch-all silently shadowed `/live` and `/summary`, because FastAPI
+    matches in registration order and a parameter matches anything -- so those
+    endpoints returned 404 while being perfectly well defined. Naming the two
+    real files makes the allowlist and the routing the same thing.
+    """
+    if not re.fullmatch(r"[0-9a-f]{32}", review_id):
         raise HTTPException(status_code=404, detail="not found")
     path = REVIEW_ROOT / review_id / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="not found")
     return FileResponse(path)
+
+
+@router.get("/review/{review_id}/annotated.mp4")
+def review_video(review_id: str) -> FileResponse:
+    """The scrubbable annotated copy, written once a run finishes."""
+    return _review_asset(review_id, "annotated.mp4")
+
+
+@router.get("/review/{review_id}/events.png")
+def review_contact_sheet(review_id: str) -> FileResponse:
+    """A grid of the frames where events fired."""
+    return _review_asset(review_id, "events.png")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -295,3 +311,148 @@ def viewer() -> HTMLResponse:
     if not page.is_file():
         raise HTTPException(status_code=404, detail="viewer page missing")
     return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
+# --- live streaming view -------------------------------------------------
+# The batch endpoint above processes everything, renders a file, then hands
+# it over -- so you watch a spinner for as long as the clip takes, then watch
+# a video. Streaming annotated frames as they are produced is strictly nicer
+# to use and, on a GPU, outruns real-time playback anyway.
+#
+# MJPEG over multipart/x-mixed-replace rather than WebRTC or HLS: a browser
+# renders it in a plain <img> with no client library, no transcoding and no
+# handshake. It cannot seek, so the annotated mp4 is still written alongside
+# for scrubbing afterwards.
+
+STREAM_BOUNDARY = "ppeframe"
+JPEG_QUALITY = 80
+
+
+@router.post("/review/prepare")
+async def review_prepare(
+    request: Request,
+    file: Annotated[UploadFile, File(description="Video clip to inspect.")],
+) -> dict[str, str]:
+    """Accept an upload and return an id to stream from.
+
+    Deliberately does no processing: an <img> tag can only issue a GET, so the
+    file has to arrive first and be watched second.
+    """
+    config = request.app.state.config
+    review_id = uuid.uuid4().hex
+    out_dir = REVIEW_ROOT / review_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_path = await _save_upload(file, config)
+    destination = out_dir / f"source{temp_path.suffix}"
+    temp_path.replace(destination)
+    return {"review_id": review_id, "filename": file.filename or destination.name}
+
+
+def _stream_frames(request: Request, review_id: str, stride: int) -> Iterator[bytes]:
+    """Process the clip, yielding each annotated frame as a JPEG part.
+
+    Events are written to disk as they fire so the page can pick them up once
+    the stream ends; a generator cannot return a value to the caller.
+    """
+    import cv2
+
+    config = request.app.state.config
+    detector = _require_detector(request)
+    out_dir = REVIEW_ROOT / review_id
+    source_path = next(out_dir.glob("source.*"), None)
+    if source_path is None:
+        raise HTTPException(status_code=404, detail="no such review")
+
+    pipeline = Pipeline(config, detector)  # type: ignore[arg-type]
+    detections: Counter[str] = Counter()
+    skipped: Counter[str] = Counter()
+    events: list[ViolationEvent] = []
+    event_frames: list[tuple[Frame, FrameResult]] = []
+    pairs: list[tuple[Frame, FrameResult]] = []
+
+    with VideoFileSource(source_path, stride=stride) as source:
+        fps = source.fps
+        limit = int(MAX_REVIEW_SECONDS * fps / stride)
+        for source_frame in source:
+            if len(pairs) >= limit:
+                break
+            result = pipeline.process_frame(
+                source_frame.image, source_frame.index, source_frame.timestamp_s
+            )
+            pairs.append((source_frame.image, result))
+            for d in result.detections:
+                detections[d.label.value] += 1
+            for a in result.assessments:
+                if a.skip_reason is not None:
+                    skipped[a.skip_reason.value] += 1
+            if result.events:
+                events.extend(result.events)
+                event_frames.append((source_frame.image, result))
+
+            annotated = annotate(source_frame.image, result, config)
+            ok, buffer = cv2.imencode(
+                ".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+            )
+            if not ok:
+                continue
+            payload = buffer.tobytes()
+            yield (
+                (
+                    f"--{STREAM_BOUNDARY}\r\n"
+                    f"Content-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(payload)}\r\n\r\n"
+                ).encode()
+                + payload
+                + b"\r\n"
+            )
+
+    # Written after the stream so the page can fetch a complete summary, and
+    # so the clip stays scrubbable once watching it live is over.
+    if pairs:
+        write_video(iter(pairs), out_dir / "annotated.mp4", fps / stride, config)
+    sheet = contact_sheet(event_frames, config)
+    if sheet is not None:
+        cv2.imwrite(str(out_dir / "events.png"), sheet)
+
+    summary = ReviewResponse(
+        source=source_path.name,
+        frames_processed=len(pairs),
+        duration_s=pairs[-1][1].timestamp_s if pairs else 0.0,
+        fps=fps,
+        blur_faces=config.privacy.blur_faces,
+        video_url=f"/review/{review_id}/annotated.mp4" if pairs else None,
+        contact_sheet_url=f"/review/{review_id}/events.png" if sheet is not None else None,
+        events=[_event_to_model(e) for e in events],
+        skipped=dict(skipped),
+        detections=dict(detections),
+    )
+    (out_dir / "summary.json").write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+
+
+@router.get("/review/{review_id}/live")
+def review_live(
+    request: Request,
+    review_id: str,
+    stride: Annotated[int, Query(ge=1, le=10)] = 3,
+) -> StreamingResponse:
+    """Stream annotated frames as they are produced."""
+    if not re.fullmatch(r"[0-9a-f]{32}", review_id):
+        raise HTTPException(status_code=404, detail="not found")
+    _require_detector(request)
+    return StreamingResponse(
+        _stream_frames(request, review_id, stride),
+        media_type=f"multipart/x-mixed-replace; boundary={STREAM_BOUNDARY}",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/review/{review_id}/summary", response_model=ReviewResponse)
+def review_summary(review_id: str) -> ReviewResponse:
+    """The totals, available once the live stream has finished."""
+    if not re.fullmatch(r"[0-9a-f]{32}", review_id):
+        raise HTTPException(status_code=404, detail="not found")
+    path = REVIEW_ROOT / review_id / "summary.json"
+    if not path.is_file():
+        raise HTTPException(status_code=409, detail="still processing")
+    return ReviewResponse.model_validate_json(path.read_text(encoding="utf-8"))

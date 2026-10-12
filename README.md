@@ -302,8 +302,16 @@ A local debug viewer, for inspecting output frame by frame:
 make viewer
 ```
 
-Then open <http://127.0.0.1:8000>, drop in a video, and watch the annotated
-result: green for compliant, red for violation, **grey for seen-but-not-judged**.
+Then open <http://127.0.0.1:8000> and drop in a video. Frames stream back
+annotated **as the pipeline produces them** -- on a GPU that outruns real-time
+playback, so it reads as live video with boxes rather than a progress bar
+followed by a file. Green for compliant, red for violation, **grey for
+seen-but-not-judged**.
+
+MJPEG over `multipart/x-mixed-replace`, which a browser renders in a plain
+`<img>` with no client library and no transcoding. It cannot seek, so a
+scrubbable annotated mp4 is written alongside and appears underneath when the
+run finishes.
 That third colour is the point -- it is where the system refuses to rule on
 someone whose head is out of frame, and a two-colour viewer would hide it.
 
