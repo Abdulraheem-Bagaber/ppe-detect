@@ -69,6 +69,7 @@ serve:  ## Run the API locally
 	$(UVRUN) uvicorn ppe.api.app:create_app --factory --reload
 
 viewer:  ## Run the local debug viewer at http://127.0.0.1:8000
+	# Scoped to this command only; make does not export it to the caller.
 	PPE_MODEL__WEIGHTS=runs/train/baseline/weights/best.pt \
 	$(UVRUN) uvicorn ppe.api.app:create_app --factory --port 8000
 

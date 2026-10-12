@@ -140,10 +140,20 @@ switch ($Target) {
             '--factory', '--reload')
     }
     'viewer'       {
+        # Restored afterwards: PowerShell keeps $env: set for the whole session,
+        # and leaving PPE_MODEL__WEIGHTS behind made a later `make check` in the
+        # same terminal fail two tests that expected a missing model. The suite
+        # now isolates itself too, but a task runner should not quietly rewrite
+        # the shell it was called from.
+        $previous = $env:PPE_MODEL__WEIGHTS
         $env:PPE_MODEL__WEIGHTS = 'runs/train/baseline/weights/best.pt'
         Write-Host 'debug viewer: http://127.0.0.1:8000' -ForegroundColor Cyan
-        Invoke-Uv @('run', '--extra', $script:Torch, 'uvicorn', 'ppe.api.app:create_app',
-            '--factory', '--port', '8000')
+        try {
+            Invoke-Uv @('run', '--extra', $script:Torch, 'uvicorn', 'ppe.api.app:create_app',
+                '--factory', '--port', '8000')
+        } finally {
+            $env:PPE_MODEL__WEIGHTS = $previous
+        }
     }
     'clean'        {
         foreach ($p in @('.pytest_cache', '.mypy_cache', '.ruff_cache', 'htmlcov',
